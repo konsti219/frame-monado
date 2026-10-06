@@ -31,6 +31,8 @@
 #include "device.hpp"
 
 #include <cstring>
+#include <cinttypes>
+#include <mutex>
 #include <dlfcn.h>
 #include <memory>
 #include <cmath>
@@ -84,6 +86,10 @@ namespace {
 
 DEBUG_GET_ONCE_LOG_OPTION(lh_log, "LIGHTHOUSE_LOG", U_LOGGING_INFO)
 DEBUG_GET_ONCE_BOOL_OPTION(lh_load_slimevr, "LH_LOAD_SLIMEVR", false)
+// Driver to load instead of lighthouse, by name under drivers/, e.g. "cv" for the Steam Frame
+DEBUG_GET_ONCE_OPTION(lh_driver, "STEAMVR_LH_DRIVER", "lighthouse")
+// Hand out logging stubs for interfaces we don't implement, to see what a driver calls
+DEBUG_GET_ONCE_BOOL_OPTION(lh_stub_unknown, "LH_STUB_UNKNOWN", false)
 DEBUG_GET_ONCE_NUM_OPTION(lh_discover_wait_ms, "LH_DISCOVER_WAIT_MS", 3000)
 DEBUG_GET_ONCE_FLOAT_OPTION(lh_stick_deadzone, "LH_STICK_DEADZONE", 0)
 
@@ -152,6 +158,13 @@ Context::create(const std::string &steam_install,
 	std::shared_ptr<Context> c =
 	    std::make_shared<Context>(steam_install, steamvr_install, debug_get_log_option_lh_log());
 	c->providers = std::move(providers);
+	const std::string driver_name = debug_get_option_lh_driver();
+	c->allow_late_controllers = driver_name == "cv";
+	c->driver_install_path = steamvr_install + "/drivers/" + driver_name;
+	// SteamOS (e.g. the Steam Frame) keeps the runtime config outside the Steam install
+	std::string openvr_config = std::string(getenv("HOME")) + "/.config/openvr/config";
+	c->driver_user_config_path =
+	    (std::filesystem::exists(openvr_config) ? openvr_config : steam_install + "/config") + "/" + driver_name;
 	std::strncpy(c->name, "SteamVR Lighthouse Tracking", XRT_TRACKING_NAME_LEN);
 	c->type = XRT_TRACKING_TYPE_LIGHTHOUSE;
 	c->initial_offset = XRT_POSE_IDENTITY;
@@ -161,6 +174,10 @@ Context::create(const std::string &steam_install,
 			U_LOG_IFL_E(c->log_level, "OpenVR driver initialization failed: error %u", err);
 			return nullptr;
 		}
+	}
+	// SteamVR asks the Steam Frame's driver to start its eye tracker; nothing else would here
+	if (c->mailbox.post("driver_hmd/eyetracking", R"({"type":"start_eye_server"})")) {
+		U_LOG_IFL_I(c->log_level, "Asked the driver to start its eye tracking server");
 	}
 	c->frame_thread = std::thread([ctx = c.get()] {
 		while (ctx->frame_thread_run.load()) {
@@ -177,7 +194,8 @@ Context::create(const std::string &steam_install,
 }
 
 Context::Context(const std::string &steam_install, const std::string &steamvr_install, u_logging_level level)
-    : settings(steam_install, steamvr_install, this), resources(level, steamvr_install), log_level(level),
+    : settings(steam_install, steamvr_install, this), resources(level, steamvr_install), paths(this),
+      mailbox(level), log_level(level),
       frame_thread_run(true), frame_thread()
 {}
 
@@ -192,6 +210,70 @@ Context::~Context()
 }
 
 /***** IVRDriverContext methods *****/
+
+namespace {
+// An object whose every virtual slot logs its index and returns 0
+struct LoggingStub
+{
+	void **vtable;
+	const char *name;
+};
+
+template <int Slot>
+uint64_t
+logging_stub_slot(LoggingStub *self, uint64_t a, uint64_t b, uint64_t c, uint64_t d)
+{
+	// Only the first few calls per slot, some are made every frame
+	static std::mutex mut;
+	static std::unordered_map<std::string, int> counts;
+	{
+		std::lock_guard lk(mut);
+		if (counts[std::string(self->name) + "/" + std::to_string(Slot)]++ >= 3) {
+			return 0;
+		}
+	}
+	U_LOG_W("[stub] %s slot %d (%#" PRIx64 ", %#" PRIx64 ", %#" PRIx64 ", %#" PRIx64 ")", self->name, Slot, a, b, c,
+	        d);
+	return 0;
+}
+
+// For slots that return std::string by value
+std::string
+empty_string_slot(LoggingStub *self)
+{
+	return {};
+}
+
+template <int... Slots>
+void **
+logging_stub_vtable(std::integer_sequence<int, Slots...>)
+{
+	static void *vtable[] = {reinterpret_cast<void *>(&logging_stub_slot<Slots>)...};
+	return vtable;
+}
+
+void *
+logging_stub(const char *name)
+{
+	static std::mutex mut;
+	static std::unordered_map<std::string, std::unique_ptr<LoggingStub>> stubs;
+	std::lock_guard lk(mut);
+	auto &stub = stubs[name];
+	if (!stub) {
+		stub = std::make_unique<LoggingStub>();
+		stub->vtable = logging_stub_vtable(std::make_integer_sequence<int, 96>{});
+		stub->name = strdup(name);
+		if (std::strcmp(name, "IVRServerInternal_XXX") == 0) {
+			// driver_cv puts slot 67's std::string (returned through x8) into JSON every few minutes
+			void **vtable = new void *[96];
+			std::memcpy(vtable, stub->vtable, 96 * sizeof(void *));
+			vtable[67] = reinterpret_cast<void *>(&empty_string_slot);
+			stub->vtable = vtable;
+		}
+	}
+	return stub.get();
+}
+} // namespace
 
 void *
 Context::GetGenericInterface(const char *pchInterfaceVersion, vr::EVRInitError *peError)
@@ -220,17 +302,27 @@ Context::GetGenericInterface(const char *pchInterfaceVersion, vr::EVRInitError *
 	// This version of the interface is not in a public header.
 	// Luckily it seems to be compatible with the previous version.
 	MATCH_INTERFACE("IVRPaths_002", &paths);
+	MATCH_INTERFACE("IVRMailbox_002", &mailbox);
+	MATCH_INTERFACE("IVRSettingsInternal_001", static_cast<vr::IVRSettings *>(&settings_internal));
+	MATCH_INTERFACE("IVRPropertiesInternal_001", static_cast<vr::IVRProperties *>(&properties_internal));
 
-	// Internal interfaces
-	MATCH_INTERFACE("IVRServer_XXX", &server);
-	MATCH_INTERFACE("IVRServerInternal_XXX", &server);
+	// Internal interfaces; other drivers (e.g. cv) call past the end of the lighthouse-sized no-op table
+	if (std::strcmp(debug_get_option_lh_driver(), "lighthouse") == 0) {
+		MATCH_INTERFACE("IVRServer_XXX", &server);
+		MATCH_INTERFACE("IVRServerInternal_XXX", &server);
+	}
+
+	if (debug_get_bool_option_lh_stub_unknown()) {
+		CTX_WARN("Returning logging stub for unknown interface %s", pchInterfaceVersion);
+		return logging_stub(pchInterfaceVersion);
+	}
 	return nullptr;
 }
 
 vr::DriverHandle_t
 Context::GetDriverHandle()
 {
-	return 1;
+	return DRIVER_HANDLE;
 }
 
 
@@ -289,6 +381,10 @@ Context::setup_hmd(const char *serial, vr::ITrackedDeviceServerDriver *driver)
 
 	hmd_parts->base.blend_modes[0] = XRT_BLEND_MODE_OPAQUE;
 	hmd_parts->base.blend_mode_count = 1;
+	if (const char *driver = getenv("STEAMVR_LH_DRIVER"); driver && !strcmp(driver, "cv") && !getenv("SF_PASSTHROUGH_OFF")) {
+		hmd_parts->base.blend_modes[1] = XRT_BLEND_MODE_ALPHA_BLEND;
+		hmd_parts->base.blend_mode_count = 2;
+	}
 
 	auto &distortion = hmd_parts->base.distortion;
 	distortion.models = XRT_DISTORTION_MODEL_COMPUTE;
@@ -377,6 +473,11 @@ Context::setup_controller(const char *serial, vr::ITrackedDeviceServerDriver *dr
 	default: break;
 	}
 
+	{
+		std::lock_guard lk(this->devices_mut);
+		controller_ready[device_idx] = true;
+	}
+	CTX_INFO("Controller activated: %s, hand %d", serial, device->device_type);
 	return true;
 }
 
@@ -403,6 +504,19 @@ Context::wait_for_discover()
 }
 
 void
+Context::retire_controllers()
+{
+	std::vector<xrt_device *> devices;
+	{
+		std::unique_lock lk(devices_mut);
+		shutting_down = true;
+		discover_cv.wait(lk, [this] { return devices_in_setup == 0; });
+		for (auto *device : controller) if (device) devices.push_back(device);
+	}
+	for (auto *device : devices) xrt_device_destroy(&device);
+}
+
+void
 Context::extend_discover()
 {
 	// Only ever push the deadline out - a device showing up must not cut `LH_DISCOVER_WAIT_MS` short.
@@ -422,14 +536,13 @@ Context::TrackedDeviceAdded(const char *pchDeviceSerialNumber,
 	{
 		std::lock_guard lk(this->devices_mut);
 
-		if (!this->in_setup) {
-			// devices appearing after setup are not added to xrt_system_devices and would be leaked on
-			// exit
+		if (this->shutting_down || (!this->in_setup &&
+		    !(this->allow_late_controllers && eDeviceClass == vr::TrackedDeviceClass_Controller))) {
 			CTX_WARN("Cannot add device after setup; consider increasing LH_DISCOVER_WAIT_MS");
 			return false;
 		}
 
-		this->extend_discover();
+		if (this->in_setup) this->extend_discover();
 
 		// The setup below runs without `devices_mut` held, and publishes the device before the driver has
 		// finished activating it - keep discovery from ending in the middle of that.
@@ -666,7 +779,9 @@ Context::update_component_common_locked(vr::VRInputComponentHandle_t handle, dou
 	xrt_input *input{nullptr};
 
 	if (handle != vr::k_ulInvalidInputComponentHandle) {
-		input = this->input.handle_to_input[handle];
+		auto it = this->input.handle_to_input.find(handle);
+		if (it == this->input.handle_to_input.end() || !it->second) return nullptr;
+		input = it->second;
 		input->active = true;
 		input->timestamp = os_monotonic_get_ns() + time_s_to_ns(offset);
 	}
@@ -928,6 +1043,11 @@ Context::ReadPropertyBatch(vr::PropertyContainerHandle_t ulContainerHandle,
 {
 	std::lock_guard lk(this->devices_mut);
 
+	if (ulContainerHandle == DRIVER_HANDLE && pBatch)
+		return read_driver_properties(pBatch, unBatchEntryCount);
+	if (BlockQueue::is_block_handle(ulContainerHandle) && pBatch)
+		return blockqueue.read_block_properties(ulContainerHandle, pBatch, unBatchEntryCount);
+
 	Device *device = prop_container_to_device(ulContainerHandle);
 	if (!device)
 		return vr::TrackedProp_InvalidContainer;
@@ -943,6 +1063,11 @@ Context::WritePropertyBatch(vr::PropertyContainerHandle_t ulContainerHandle,
 {
 	std::lock_guard lk(this->devices_mut);
 
+	if (ulContainerHandle == DRIVER_HANDLE)
+		return vr::TrackedProp_Success;
+	if (BlockQueue::is_block_handle(ulContainerHandle) && pBatch)
+		return blockqueue.write_block_properties(ulContainerHandle, pBatch, unBatchEntryCount);
+
 	Device *device = prop_container_to_device(ulContainerHandle);
 	if (!device)
 		return vr::TrackedProp_InvalidContainer;
@@ -955,6 +1080,33 @@ const char *
 Context::GetPropErrorNameFromEnum(vr::ETrackedPropertyError error)
 {
 	return nullptr;
+}
+
+vr::ETrackedPropertyError
+Context::read_driver_properties(vr::PropertyRead_t *batch, uint32_t count)
+{
+	for (uint32_t i = 0; i < count; i++) {
+		vr::PropertyRead_t &prop = batch[i];
+		const std::string *value = nullptr;
+		if (prop.prop == vr::Prop_InstallPath_String) {
+			value = &driver_install_path;
+		} else if (prop.prop == vr::Prop_UserConfigPath_String) {
+			value = &driver_user_config_path;
+		}
+		if (value == nullptr) {
+			prop.eError = vr::TrackedProp_UnknownProperty;
+			continue;
+		}
+		prop.unTag = vr::k_unStringPropertyTag;
+		prop.unRequiredBufferSize = value->size() + 1;
+		if (prop.pvBuffer == nullptr || prop.unBufferSize < value->size() + 1) {
+			prop.eError = vr::TrackedProp_BufferTooSmall;
+			continue;
+		}
+		std::memcpy(prop.pvBuffer, value->c_str(), value->size() + 1);
+		prop.eError = vr::TrackedProp_Success;
+	}
+	return vr::TrackedProp_Success;
 }
 
 Device *
@@ -1054,7 +1206,8 @@ steamvr_lh_create_devices(struct xrt_prober *xp, struct xrt_system_devices *xsys
 		}
 		return true;
 	};
-	if (!loadDriver("/drivers/lighthouse/bin/" OVR_PLAT_SUBDIR "/driver_lighthouse" OVR_PLAT_EXT, true))
+	const std::string driver_name = debug_get_option_lh_driver();
+	if (!loadDriver("/drivers/" + driver_name + "/bin/" OVR_PLAT_SUBDIR "/driver_" + driver_name + OVR_PLAT_EXT, true))
 		return xrt_result::XRT_ERROR_DEVICE_CREATION_FAILED;
 	if (debug_get_bool_option_lh_load_slimevr() &&
 	    !loadDriver("/drivers/slimevr/bin/" OVR_PLAT_SUBDIR "/driver_slimevr" OVR_PLAT_EXT, false))
@@ -1085,10 +1238,13 @@ steamvr_lh_create_devices(struct xrt_prober *xp, struct xrt_system_devices *xsys
 		xsysd->static_xdevs[xsysd->static_xdev_count++] = ctx->hmd;
 	}
 
-	// Include the controllers
-	for (size_t i = 0; i < MAX_CONTROLLERS; i++) {
-		if (ctx->controller[i]) {
-			xsysd->static_xdevs[xsysd->static_xdev_count++] = ctx->controller[i];
+	if (ctx->allow_late_controllers) {
+		xrt_device *proxies[2];
+		create_frame_controller_proxies(ctx, STEAM_INSTALL_DIR, proxies);
+		for (auto *proxy : proxies) xsysd->static_xdevs[xsysd->static_xdev_count++] = proxy;
+	} else {
+		for (size_t i = 0; i < MAX_CONTROLLERS; i++) {
+			if (ctx->controller[i]) xsysd->static_xdevs[xsysd->static_xdev_count++] = ctx->controller[i];
 		}
 	}
 

@@ -833,6 +833,9 @@ enum xrt_device_name
 	XRT_DEVICE_TOUCH_CONTROLLER_QUEST_1_RIFT_S,
 	XRT_DEVICE_TOUCH_CONTROLLER_QUEST_2,
 
+	//! XR_VALVE_frame_controller_interaction
+	XRT_DEVICE_FRAME_CONTROLLER,
+
 	// XR_KHR_generic_controller
 	XRT_DEVICE_GENERIC_CONTROLLER,
 
@@ -1446,6 +1449,48 @@ enum xrt_input_name
 	XRT_INPUT_MAGNETRA2_GRIP_POSE                               = XRT_INPUT_NAME(0X150B, POSE),
 	XRT_INPUT_MAGNETRA2_AIM_POSE                                = XRT_INPUT_NAME(0X150C, POSE),
 
+	// XR_VALVE_frame_controller_interaction
+	// Right controller: a, b, x, y, menu
+	XRT_INPUT_FRAME_A_CLICK                               = XRT_INPUT_NAME(0x1600, BOOLEAN),
+	XRT_INPUT_FRAME_A_TOUCH                               = XRT_INPUT_NAME(0x1601, BOOLEAN),
+	XRT_INPUT_FRAME_B_CLICK                               = XRT_INPUT_NAME(0x1602, BOOLEAN),
+	XRT_INPUT_FRAME_B_TOUCH                               = XRT_INPUT_NAME(0x1603, BOOLEAN),
+	XRT_INPUT_FRAME_X_CLICK                               = XRT_INPUT_NAME(0x1604, BOOLEAN),
+	XRT_INPUT_FRAME_X_TOUCH                               = XRT_INPUT_NAME(0x1605, BOOLEAN),
+	XRT_INPUT_FRAME_Y_CLICK                               = XRT_INPUT_NAME(0x1606, BOOLEAN),
+	XRT_INPUT_FRAME_Y_TOUCH                               = XRT_INPUT_NAME(0x1607, BOOLEAN),
+	XRT_INPUT_FRAME_MENU_CLICK                            = XRT_INPUT_NAME(0x1608, BOOLEAN),
+	XRT_INPUT_FRAME_MENU_TOUCH                            = XRT_INPUT_NAME(0x1609, BOOLEAN),
+
+	// Left controller: dpad, view
+	XRT_INPUT_FRAME_DPAD_UP_CLICK                         = XRT_INPUT_NAME(0x160A, BOOLEAN),
+	XRT_INPUT_FRAME_DPAD_UP_TOUCH                         = XRT_INPUT_NAME(0x160B, BOOLEAN),
+	XRT_INPUT_FRAME_DPAD_DOWN_CLICK                       = XRT_INPUT_NAME(0x160C, BOOLEAN),
+	XRT_INPUT_FRAME_DPAD_DOWN_TOUCH                       = XRT_INPUT_NAME(0x160D, BOOLEAN),
+	XRT_INPUT_FRAME_DPAD_LEFT_CLICK                       = XRT_INPUT_NAME(0x160E, BOOLEAN),
+	XRT_INPUT_FRAME_DPAD_LEFT_TOUCH                       = XRT_INPUT_NAME(0x160F, BOOLEAN),
+	XRT_INPUT_FRAME_DPAD_RIGHT_CLICK                      = XRT_INPUT_NAME(0x1610, BOOLEAN),
+	XRT_INPUT_FRAME_DPAD_RIGHT_TOUCH                      = XRT_INPUT_NAME(0x1611, BOOLEAN),
+	XRT_INPUT_FRAME_VIEW_CLICK                            = XRT_INPUT_NAME(0x1612, BOOLEAN),
+	XRT_INPUT_FRAME_VIEW_TOUCH                            = XRT_INPUT_NAME(0x1613, BOOLEAN),
+
+	// Both: system, bumper, squeeze, trigger, thumbstick
+	XRT_INPUT_FRAME_SYSTEM_CLICK                          = XRT_INPUT_NAME(0x1614, BOOLEAN),
+	XRT_INPUT_FRAME_SYSTEM_TOUCH                          = XRT_INPUT_NAME(0x1615, BOOLEAN),
+	XRT_INPUT_FRAME_BUMPER_CLICK                          = XRT_INPUT_NAME(0x1616, BOOLEAN),
+	XRT_INPUT_FRAME_BUMPER_TOUCH                          = XRT_INPUT_NAME(0x1617, BOOLEAN),
+	XRT_INPUT_FRAME_SQUEEZE_CLICK                         = XRT_INPUT_NAME(0x1618, BOOLEAN),
+	XRT_INPUT_FRAME_SQUEEZE_TOUCH                         = XRT_INPUT_NAME(0x1619, BOOLEAN),
+	XRT_INPUT_FRAME_SQUEEZE_VALUE                         = XRT_INPUT_NAME(0x161A, VEC1_ZERO_TO_ONE),
+	XRT_INPUT_FRAME_TRIGGER_CLICK                         = XRT_INPUT_NAME(0x161B, BOOLEAN),
+	XRT_INPUT_FRAME_TRIGGER_TOUCH                         = XRT_INPUT_NAME(0x161C, BOOLEAN),
+	XRT_INPUT_FRAME_TRIGGER_VALUE                         = XRT_INPUT_NAME(0x161D, VEC1_ZERO_TO_ONE),
+	XRT_INPUT_FRAME_THUMBSTICK_CLICK                      = XRT_INPUT_NAME(0x161E, BOOLEAN),
+	XRT_INPUT_FRAME_THUMBSTICK_TOUCH                      = XRT_INPUT_NAME(0x161F, BOOLEAN),
+	XRT_INPUT_FRAME_THUMBSTICK                            = XRT_INPUT_NAME(0x1620, VEC2_MINUS_ONE_TO_ONE),
+	XRT_INPUT_FRAME_GRIP_POSE                             = XRT_INPUT_NAME(0x1621, POSE),
+	XRT_INPUT_FRAME_AIM_POSE                              = XRT_INPUT_NAME(0x1622, POSE),
+
 	// clang-format on
 };
 
@@ -1686,6 +1731,9 @@ enum xrt_output_name
 	XRT_OUTPUT_NAME_GENERIC_VIBRATION                           = XRT_OUTPUT_NAME(0x0B00, VIBRATION),
 
 	XRT_OUTPUT_NAME_CONTACTGLOVE2_HAPTIC                        = XRT_OUTPUT_NAME(0x0C00, VIBRATION),
+
+	//! XR_VALVE_frame_controller_interaction
+	XRT_OUTPUT_NAME_FRAME_HAPTIC                                = XRT_OUTPUT_NAME(0x0D00, VIBRATION),
 
 	// clang-format on
 	// Make sure to add a trailing comma to any new entries.

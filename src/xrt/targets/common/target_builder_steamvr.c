@@ -21,6 +21,9 @@
 #include "xrt/xrt_prober.h"
 
 #include "util/u_debug.h"
+
+#include <stdlib.h>
+#include <string.h>
 #include "util/u_device.h"
 #include "util/u_system_helpers.h"
 
@@ -94,6 +97,17 @@ steamvr_estimate_system(struct xrt_builder *xb,
 	// Currently no built in support for hand tracking.
 	bool have_hand_tracking = false;
 
+	// A non-lighthouse driver (e.g. "cv" on the Steam Frame) has no USB devices to probe for
+	const char *driver = getenv("STEAMVR_LH_DRIVER");
+	if (debug_get_bool_option_steamvr_enable() && driver != NULL && strcmp(driver, "lighthouse") != 0) {
+		estimate->certain.head = true;
+		estimate->certain.dof6 = true;
+		estimate->maybe.left = true;
+		estimate->maybe.right = true;
+		estimate->priority = 1;
+		return XRT_SUCCESS;
+	}
+
 	if (debug_get_bool_option_steamvr_enable()) {
 		return vive_builder_estimate( //
 		    xp,                       // xp
@@ -146,6 +160,10 @@ steamvr_open_system_impl(struct xrt_builder *xb,
 #undef SET_HT_ROLES
 
 	tbo->head = xsysd->static_xdevs[head];
+	// The Steam Frame's HMD device also provides eye gaze
+	if (tbo->head->supported.eye_gaze) {
+		tbo->eyes = tbo->head;
+	}
 
 	if (left != XRT_DEVICE_ROLE_UNASSIGNED) {
 		tbo->left = xsysd->static_xdevs[left];

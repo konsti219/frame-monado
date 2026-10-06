@@ -32,6 +32,7 @@
 #include "util/u_debug.h"
 
 #include "util/comp_render.h"
+#include "util/comp_frame_passthrough.h"
 #include "util/comp_high_level_render.h"
 
 #include "main/comp_frame.h"
@@ -118,6 +119,7 @@ enum comp_target_fov_source
  */
 struct comp_renderer
 {
+	struct sf_comp_passthrough *passthrough;
 	//! @name Durable members
 	//! @brief These don't require the images to be created and don't depend on it.
 	//! @{
@@ -817,6 +819,7 @@ renderer_acquire_swapchain_image(struct comp_renderer *r)
 
 	if (ret != VK_SUCCESS) {
 		COMP_ERROR(r->c, "comp_target_acquire: %s", vk_result_string(ret));
+		return;
 	}
 
 	r->acquired_buffer = buffer_index;
@@ -922,6 +925,8 @@ static void
 renderer_fini(struct comp_renderer *r)
 {
 	struct vk_bundle *vk = &r->c->base.vk;
+
+	sf_comp_passthrough_destroy(&r->passthrough);
 
 	// Command buffers
 	renderer_close_renderings_and_fences(r);
@@ -1121,6 +1126,10 @@ comp_renderer_draw(struct comp_renderer *r)
 		// Ensures that renderings are created.
 		renderer_acquire_swapchain_image(r);
 	}
+	if (r->acquired_buffer < 0 || !r->rtr_array) {
+		comp_frame_clear_locked(&c->frame.rendering);
+		return XRT_ERROR_VULKAN;
+	}
 
 	comp_target_update_timings(ct);
 
@@ -1128,7 +1137,11 @@ comp_renderer_draw(struct comp_renderer *r)
 	const uint32_t view_count = c->nr.view_count;
 	enum comp_target_fov_source fov_source = COMP_TARGET_FOV_SOURCE_DISTORTION;
 
-	bool fast_path = c->base.frame_params.one_projection_layer_fast_path;
+	if (!r->passthrough && !r->settings->use_compute) r->passthrough = sf_comp_passthrough_create(&c->base.vk);
+	const char *force_pt = getenv("SF_PASSTHROUGH");
+	bool passthrough = sf_comp_passthrough_request(r->passthrough,
+	    c->base.layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND || (force_pt && !strcmp(force_pt, "1")));
+	bool fast_path = c->base.frame_params.one_projection_layer_fast_path && !passthrough;
 	bool do_timewarp = !c->debug.atw_off;
 
 	// Consistency check.
@@ -1143,6 +1156,9 @@ comp_renderer_draw(struct comp_renderer *r)
 	    do_timewarp,      //
 	    fast_path,        //
 	    &c->scratch);     //
+
+	frame_state.data.passthrough = passthrough ? r->passthrough : NULL;
+	frame_state.data.pose_timestamp_ns = c->frame.rendering.predicted_display_time_ns;
 
 	bool use_compute = r->settings->use_compute;
 	struct render_gfx render_g = {0};
@@ -1238,6 +1254,7 @@ comp_renderer_draw(struct comp_renderer *r)
 	 * This is done after a swap so isn't time critical.
 	 */
 	renderer_wait_queue_idle(r);
+	sf_comp_passthrough_finish(r->passthrough);
 
 	/*
 	 * Free any resources and finalize the scratch images,

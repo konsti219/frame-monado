@@ -19,6 +19,9 @@ add_library(
 	comp_render.h
 	comp_render_cs.c
 	comp_render_gfx.c
+	comp_frame_passthrough.c
+	comp_frame_passthrough.h
+	sf_passthrough.h
 	comp_render_helpers.h
 	comp_scratch.c
 	comp_scratch.h

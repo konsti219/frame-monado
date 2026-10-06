@@ -39,6 +39,8 @@
 #include "layer_projection.frag.h"
 #include "layer_quad.vert.h"
 #include "layer_quad.frag.h"
+#include "frame_passthrough.vert.h"
+#include "frame_passthrough.frag.h"
 #include "mesh.frag.h"
 #include "mesh.vert.h"
 
@@ -112,6 +114,8 @@ render_shaders_load(struct render_shaders *s, struct vk_bundle *vk)
 
 	LOAD(distortion_comp);
 
+	LOAD(frame_passthrough_vert);
+	LOAD(frame_passthrough_frag);
 	LOAD(mesh_vert);
 	LOAD(mesh_frag);
 
@@ -137,6 +141,8 @@ render_shaders_fini(struct render_shaders *s, struct vk_bundle *vk)
 	D(ShaderModule, s->clear_comp);
 	D(ShaderModule, s->distortion_comp);
 	D(ShaderModule, s->layer_comp);
+	D(ShaderModule, s->frame_passthrough_vert);
+	D(ShaderModule, s->frame_passthrough_frag);
 	D(ShaderModule, s->mesh_vert);
 	D(ShaderModule, s->mesh_frag);
 

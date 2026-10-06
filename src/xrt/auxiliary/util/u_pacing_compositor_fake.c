@@ -20,6 +20,7 @@
 #include "util/u_trace_marker.h"
 
 #include <stdio.h>
+#include <inttypes.h>
 #include <assert.h>
 #include <math.h>
 
@@ -320,6 +321,9 @@ pc_predict(struct u_pacing_compositor *upc,
 	*out_predicted_display_time_ns = predicted_display_time_ns;
 	*out_predicted_display_period_ns = predicted_display_period_ns;
 	*out_min_display_period_ns = min_display_period_ns;
+
+	U_LOG_IFL_T(debug_get_log_option_log_level_fake(), "frame %" PRId64 " desired_present %" PRId64 " predicted_display %" PRId64, frame_id,
+	            desired_present_time_ns, predicted_display_time_ns);
 
 	if (!u_metrics_is_active()) {
 		return;

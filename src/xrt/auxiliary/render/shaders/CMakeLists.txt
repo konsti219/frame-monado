@@ -16,6 +16,8 @@ set(SHADERS
     clear.comp
     distortion.comp
     layer.comp
+    frame_passthrough.vert
+    frame_passthrough.frag
     mesh.frag
     mesh.vert
     layer_cylinder.frag

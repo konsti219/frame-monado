@@ -176,7 +176,11 @@ public:
 	struct VivePro2Data vp2{};
 	// clang-format on
 
+	//! The Steam Frame's gaze, from Valve's eye tracking server
+	std::unique_ptr<class EyeGazeReader> eye_gaze;
+
 	HmdDevice(const DeviceBuilder &builder);
+	~HmdDevice();
 
 	float
 	getIpdM();
@@ -223,6 +227,9 @@ private:
 
 	void
 	set_hmd_class(const InputClass *hmd_class);
+
+	const InputClass *
+	fallback_hmd_class() const;
 
 	vr::ETrackedPropertyError
 	handle_property_write(const vr::PropertyWrite_t &prop) override;
@@ -291,3 +298,7 @@ private:
 	vr::ETrackedPropertyError
 	handle_property_write(const vr::PropertyWrite_t &prop) override;
 };
+
+void
+create_frame_controller_proxies(const std::shared_ptr<Context> &ctx, const std::string &steam_install,
+                                xrt_device *out_devices[2]);

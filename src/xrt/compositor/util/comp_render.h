@@ -170,8 +170,12 @@ struct comp_render_view_data
  *
  * @ingroup comp_render
  */
+struct sf_comp_passthrough;
+
 struct comp_render_dispatch_data
 {
+	struct sf_comp_passthrough *passthrough;
+	uint64_t pose_timestamp_ns;
 	struct comp_render_view_data views[XRT_MAX_VIEWS];
 
 	/*!

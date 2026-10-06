@@ -30,6 +30,8 @@ struct render_shaders
 	VkShaderModule layer_comp;
 	VkShaderModule distortion_comp;
 
+	VkShaderModule frame_passthrough_vert;
+	VkShaderModule frame_passthrough_frag;
 	VkShaderModule mesh_vert;
 	VkShaderModule mesh_frag;
 

@@ -102,7 +102,7 @@ chl_frame_state_gfx_set_views(struct chl_frame_state *frame_state,
 		    rsci_rtr,                      // squash_rtr
 		    &layer_viewport_data);         // squash_viewport_data
 
-		if (layer_count == 0) {
+		if (layer_count == 0 && !frame_state->data.passthrough) {
 			frame_state->scratch_state.views[i].used = false;
 		} else {
 			frame_state->scratch_state.views[i].used = !frame_state->data.fast_path;
@@ -187,7 +187,7 @@ chl_frame_state_cs_set_views(struct chl_frame_state *frame_state,
 		    storage_view,                  // squash_storage_view
 		    &layer_viewport_data);         // squash_viewport_data
 
-		if (layer_count == 0) {
+		if (layer_count == 0 && !frame_state->data.passthrough) {
 			frame_state->scratch_state.views[i].used = false;
 		} else {
 			frame_state->scratch_state.views[i].used = !frame_state->data.fast_path;

@@ -37,9 +37,11 @@
 #include "openvr_driver.h"
 
 #include "device.hpp"
+#include "eye_gaze.hpp"
 
 #include <cmath>
 #include <functional>
+#include <chrono>
 #include <cstring>
 #include <numbers>
 #include <openvr_driver.h>
@@ -156,6 +158,52 @@ const std::unordered_map<std::string_view, InputClass> controller_classes{
                 {"/input/trackpad/force", XRT_INPUT_INDEX_TRACKPAD_FORCE},
                 {"/input/trackpad/touch", XRT_INPUT_INDEX_TRACKPAD_TOUCH},
                 {"/input/trackpad", XRT_INPUT_INDEX_TRACKPAD},
+            },
+        },
+    },
+    {
+        "frame_controller",
+        InputClass{
+            XRT_DEVICE_FRAME_CONTROLLER,
+            {
+                XRT_INPUT_FRAME_GRIP_POSE,
+                XRT_INPUT_FRAME_AIM_POSE,
+                XRT_INPUT_GENERIC_PALM_POSE,
+            },
+            {
+                {"/input/system/click", XRT_INPUT_FRAME_SYSTEM_CLICK},
+                {"/input/system/touch", XRT_INPUT_FRAME_SYSTEM_TOUCH},
+                {"/input/menu/click", XRT_INPUT_FRAME_MENU_CLICK},
+                {"/input/menu/touch", XRT_INPUT_FRAME_MENU_TOUCH},
+                {"/input/view/click", XRT_INPUT_FRAME_VIEW_CLICK},
+                {"/input/view/touch", XRT_INPUT_FRAME_VIEW_TOUCH},
+                {"/input/a/click", XRT_INPUT_FRAME_A_CLICK},
+                {"/input/a/touch", XRT_INPUT_FRAME_A_TOUCH},
+                {"/input/b/click", XRT_INPUT_FRAME_B_CLICK},
+                {"/input/b/touch", XRT_INPUT_FRAME_B_TOUCH},
+                {"/input/x/click", XRT_INPUT_FRAME_X_CLICK},
+                {"/input/x/touch", XRT_INPUT_FRAME_X_TOUCH},
+                {"/input/y/click", XRT_INPUT_FRAME_Y_CLICK},
+                {"/input/y/touch", XRT_INPUT_FRAME_Y_TOUCH},
+                {"/input/dpad_up/click", XRT_INPUT_FRAME_DPAD_UP_CLICK},
+                {"/input/dpad_up/touch", XRT_INPUT_FRAME_DPAD_UP_TOUCH},
+                {"/input/dpad_down/click", XRT_INPUT_FRAME_DPAD_DOWN_CLICK},
+                {"/input/dpad_down/touch", XRT_INPUT_FRAME_DPAD_DOWN_TOUCH},
+                {"/input/dpad_left/click", XRT_INPUT_FRAME_DPAD_LEFT_CLICK},
+                {"/input/dpad_left/touch", XRT_INPUT_FRAME_DPAD_LEFT_TOUCH},
+                {"/input/dpad_right/click", XRT_INPUT_FRAME_DPAD_RIGHT_CLICK},
+                {"/input/dpad_right/touch", XRT_INPUT_FRAME_DPAD_RIGHT_TOUCH},
+                {"/input/bumper/click", XRT_INPUT_FRAME_BUMPER_CLICK},
+                {"/input/bumper/touch", XRT_INPUT_FRAME_BUMPER_TOUCH},
+                {"/input/trigger/click", XRT_INPUT_FRAME_TRIGGER_CLICK},
+                {"/input/trigger/touch", XRT_INPUT_FRAME_TRIGGER_TOUCH},
+                {"/input/trigger/value", XRT_INPUT_FRAME_TRIGGER_VALUE},
+                {"/input/grip/click", XRT_INPUT_FRAME_SQUEEZE_CLICK},
+                {"/input/grip/touch", XRT_INPUT_FRAME_SQUEEZE_TOUCH},
+                {"/input/grip/value", XRT_INPUT_FRAME_SQUEEZE_VALUE},
+                {"/input/thumbstick/click", XRT_INPUT_FRAME_THUMBSTICK_CLICK},
+                {"/input/thumbstick/touch", XRT_INPUT_FRAME_THUMBSTICK_TOUCH},
+                {"/input/thumbstick", XRT_INPUT_FRAME_THUMBSTICK},
             },
         },
     },
@@ -315,6 +363,63 @@ Property::Property(vr::PropertyTypeTag_t tag, void *buffer, uint32_t bufferSize)
 	std::memcpy(this->buffer.data(), buffer, bufferSize);
 }
 
+namespace {
+xrt_binding_input_pair eye_gaze_inputs[] = {
+    {XRT_INPUT_GENERIC_EYE_GAZE_POSE, XRT_INPUT_GENERIC_EYE_GAZE_POSE},
+};
+xrt_binding_profile eye_gaze_binding_profiles[] = {
+    {
+        .name = XRT_DEVICE_EYE_GAZE_INTERACTION,
+        .inputs = eye_gaze_inputs,
+        .input_count = ARRAY_SIZE(eye_gaze_inputs),
+    },
+};
+
+// Steam Frame (driver_cv): eye gaze comes from shared memory, see EyeGazeReader.
+const InputClass frame_hmd_class{
+    XRT_DEVICE_GENERIC_HMD,
+    {
+        XRT_INPUT_GENERIC_HEAD_POSE,
+        XRT_INPUT_GENERIC_EYE_GAZE_POSE,
+    },
+    {
+        {"/proximity", XRT_INPUT_GENERIC_HEAD_DETECT},
+    },
+    eye_gaze_binding_profiles,
+};
+} // namespace
+
+//! openxr_grip and openxr_aim from the Steam Frame controllers' render models, relative to the driver pose
+void
+frame_pose_offset(xrt_device_type type, xrt_input_name name, xrt_pose *out)
+{
+	const float side = (type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER) ? -1.0f : 1.0f;
+	float angle_deg;
+	if (name == XRT_INPUT_FRAME_GRIP_POSE) {
+		out->position = {side * 0.003117f, -0.004277f, 0.099501f};
+		angle_deg = 2.8091f;
+	} else if (name == XRT_INPUT_FRAME_AIM_POSE) {
+		out->position = {-side * 0.012694f, -0.02522f, 0.020687f};
+		angle_deg = -40.0f;
+	} else {
+		*out = XRT_POSE_IDENTITY;
+		return;
+	}
+	const xrt_vec3 x_axis{1, 0, 0};
+	math_quat_from_angle_vector(angle_deg * (float)M_PI / 180.0f, &x_axis, &out->orientation);
+}
+
+HmdDevice::~HmdDevice() = default;
+
+namespace {
+// Eye gaze is always read; clients only toggle the feature
+xrt_result_t
+eye_gaze_feature_noop(struct xrt_device *, enum xrt_device_feature_type)
+{
+	return XRT_SUCCESS;
+}
+} // namespace
+
 HmdDevice::HmdDevice(const DeviceBuilder &builder) : Device(builder)
 {
 	this->name = XRT_DEVICE_GENERIC_HMD;
@@ -323,8 +428,17 @@ HmdDevice::HmdDevice(const DeviceBuilder &builder) : Device(builder)
 
 	this->supported.compositor_info = true;
 
+	// The Steam Frame (driver_cv) has eye tracking, published in shared memory rather than through the driver API
+	const char *driver = getenv("STEAMVR_LH_DRIVER");
+	if (driver != nullptr && std::strcmp(driver, "cv") == 0) {
+		this->eye_gaze = std::make_unique<EyeGazeReader>();
+		this->supported.eye_gaze = true;
+		this->xrt_device::begin_feature = eye_gaze_feature_noop;
+		this->xrt_device::end_feature = eye_gaze_feature_noop;
+	}
+
 	// Refined once lighthouse gives us the model number, see handle_property_write.
-	set_hmd_class(&generic_hmd_class);
+	set_hmd_class(fallback_hmd_class());
 
 #define SETUP_MEMBER_FUNC(name) this->xrt_device::name = &device_bouncer<HmdDevice, &HmdDevice::name, xrt_result_t>
 	SETUP_MEMBER_FUNC(update_inputs);
@@ -384,10 +498,10 @@ Device::Device(const DeviceBuilder &builder) : xrt_device({}), ctx(builder.ctx),
 		auto *dev = static_cast<Device *>(xdev);
 		auto &ctx = dev->ctx;
 
-		if (debug_get_bool_option_lh_standby_on_exit()) {
-			dev->driver->EnterStandby();
+		if (dev->driver) {
+			if (debug_get_bool_option_lh_standby_on_exit()) dev->driver->EnterStandby();
+			dev->driver->Deactivate();
 		}
-		dev->driver->Deactivate();
 
 		// The context outlives us until the last device releases it, and its frame thread keeps
 		// running that whole time - unregister before tearing anything down so it cannot reach us.
@@ -409,9 +523,10 @@ Device::Device(const DeviceBuilder &builder) : xrt_device({}), ctx(builder.ctx),
 			if (ctx->hmd == dev) {
 				ctx->hmd = nullptr;
 			}
-			for (ControllerDevice *&controller : ctx->controller) {
-				if (controller == dev) {
-					controller = nullptr;
+			for (size_t i = 0; i < 16; i++) {
+				if (ctx->controller[i] == dev) {
+					ctx->controller[i] = nullptr;
+					ctx->controller_ready[i] = false;
 				}
 			}
 		}
@@ -726,6 +841,10 @@ ControllerDevice::set_haptic_handle(vr::VRInputComponentHandle_t handle)
 		name = XRT_OUTPUT_NAME_VIVE_HAPTIC;
 		break;
 	}
+	case XRT_DEVICE_FRAME_CONTROLLER: {
+		name = XRT_OUTPUT_NAME_FRAME_HAPTIC;
+		break;
+	}
 	case XRT_DEVICE_INDEX_CONTROLLER: {
 		name = XRT_OUTPUT_NAME_INDEX_HAPTIC;
 		break;
@@ -963,6 +1082,30 @@ HmdDevice::get_tracked_pose(xrt_input_name name, uint64_t at_timestamp_ns, xrt_s
 {
 	switch (name) {
 	case XRT_INPUT_GENERIC_HEAD_POSE: Device::get_pose(at_timestamp_ns, out_relation); break;
+	case XRT_INPUT_GENERIC_EYE_GAZE_POSE: {
+		const xrt_vec3 forward{0, 0, -1};
+		xrt_vec3 dir = forward;
+		uint64_t receive_ns;
+		bool tracked = eye_gaze && eye_gaze->latest(&dir, &receive_ns);
+		// Gaze in head space, then the head pose. Without gaze (e.g. not worn) look straight ahead, valid but
+		// untracked: some apps (the WiVRn client) submit the located pose unchecked, and Monado rejects a zero quat
+		xrt_space_relation gaze = XRT_SPACE_RELATION_ZERO;
+		math_quat_from_vec_a_to_vec_b(&forward, &dir, &gaze.pose.orientation);
+		gaze.relation_flags = (xrt_space_relation_flags)(XRT_SPACE_RELATION_ORIENTATION_VALID_BIT |
+		                                                 XRT_SPACE_RELATION_POSITION_VALID_BIT);
+		if (tracked) {
+			gaze.relation_flags = (xrt_space_relation_flags)(gaze.relation_flags |
+			                                                 XRT_SPACE_RELATION_ORIENTATION_TRACKED_BIT |
+			                                                 XRT_SPACE_RELATION_POSITION_TRACKED_BIT);
+		}
+		xrt_space_relation head = {};
+		Device::get_pose(at_timestamp_ns, &head);
+		xrt_relation_chain chain = {};
+		m_relation_chain_push_relation(&chain, &gaze);
+		m_relation_chain_push_relation(&chain, &head);
+		m_relation_chain_resolve(&chain, out_relation);
+		break;
+	}
 	default: U_LOG_XDEV_UNSUPPORTED_INPUT(this, ctx->log_level, name); return XRT_ERROR_INPUT_UNSUPPORTED;
 	}
 
@@ -985,6 +1128,8 @@ ControllerDevice::get_tracked_pose(xrt_input_name name, uint64_t at_timestamp_ns
 			return XRT_SUCCESS;
 		}
 		pose_offset = *palm_offsets[skeleton_hand];
+	} else if (input_class != nullptr && input_class->name == XRT_DEVICE_FRAME_CONTROLLER) {
+		frame_pose_offset(device_type, name, &pose_offset);
 	} else {
 		vive_poses_get_pose_offset(input_class->name, device_type, name, &pose_offset);
 	}
@@ -1463,6 +1608,12 @@ HmdDevice::set_hmd_class(const InputClass *hmd_class)
 	set_input_class(hmd_class);
 }
 
+const InputClass *
+HmdDevice::fallback_hmd_class() const
+{
+	return eye_gaze ? &frame_hmd_class : &generic_hmd_class;
+}
+
 bool
 HmdDevice::init_vive_pro_2(struct xrt_prober *xp)
 {
@@ -1546,7 +1697,7 @@ HmdDevice::handle_property_write(const vr::PropertyWrite_t &prop)
 		this->variant = vive_determine_variant(model_number.c_str());
 
 		auto hmd_class = hmd_classes.find(this->variant);
-		set_hmd_class(hmd_class != hmd_classes.end() ? &hmd_class->second : &generic_hmd_class);
+		set_hmd_class(hmd_class != hmd_classes.end() ? &hmd_class->second : fallback_hmd_class());
 
 		return Device::handle_property_write(prop);
 	}
@@ -1740,4 +1891,101 @@ ControllerDevice::handle_property_write(const vr::PropertyWrite_t &prop)
 	}
 	}
 	return handle_generic_property_write(prop);
+}
+
+namespace {
+struct FrameControllerHub
+{
+	std::shared_ptr<Context> ctx;
+	~FrameControllerHub() { ctx->retire_controllers(); }
+};
+
+class FrameControllerProxy : public ControllerDevice
+{
+	std::shared_ptr<FrameControllerHub> hub;
+
+	ControllerDevice *backend_locked()
+	{
+		for (size_t i = 0; i < 16; i++) {
+			auto *device = ctx->controller[i];
+			if (ctx->controller_ready[i] && device && device->device_type == device_type &&
+			    device->name == XRT_DEVICE_FRAME_CONTROLLER) return device;
+		}
+		return nullptr;
+	}
+
+	void update_proxy_inputs()
+	{
+		std::lock_guard lk(ctx->devices_mut);
+		auto *device = backend_locked();
+		for (auto &input : inputs_vec) {
+			input.active = false;
+			input.value = {};
+			if (!device) continue;
+			for (size_t i = 0; i < device->input_count; i++) {
+				if (device->inputs[i].name == input.name) {
+					input = device->inputs[i];
+					break;
+				}
+			}
+		}
+	}
+
+public:
+	FrameControllerProxy(const std::shared_ptr<FrameControllerHub> &hub, const std::string &steam_install,
+	                     bool left)
+	    : ControllerDevice(0, DeviceBuilder{hub->ctx, nullptr,
+	          left ? "steamframe-left" : "steamframe-right", steam_install}), hub(hub)
+	{
+		name = XRT_DEVICE_FRAME_CONTROLLER;
+		device_type = left ? XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER : XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER;
+		std::snprintf(str, sizeof(str), "Steam Frame %s controller", left ? "left" : "right");
+		set_input_class(&controller_classes.at("frame_controller"));
+		set_haptic_handle(0);
+		supported.hand_tracking = false;
+		supported.notify_chirality = false;
+		for (auto &input : inputs_vec) input.active = false;
+		update_inputs = [](xrt_device *xdev) -> xrt_result_t {
+			static_cast<FrameControllerProxy *>(xdev)->update_proxy_inputs();
+			return XRT_SUCCESS;
+		};
+		this->xrt_device::set_output = [](xrt_device *xdev, xrt_output_name name, const xrt_output_value *value) -> xrt_result_t {
+			auto *self = static_cast<FrameControllerProxy *>(xdev);
+			ControllerDevice *device;
+			{
+				std::lock_guard lk(self->ctx->devices_mut);
+				device = self->backend_locked();
+			}
+			return device ? device->set_output(name, value) : XRT_SUCCESS;
+		};
+		this->xrt_device::get_battery_status = [](xrt_device *xdev, bool *present, bool *charging, float *charge) -> xrt_result_t {
+			auto *self = static_cast<FrameControllerProxy *>(xdev);
+			std::lock_guard lk(self->ctx->devices_mut);
+			auto *device = self->backend_locked();
+			if (device) return device->get_battery_status(present, charging, charge);
+			*present = *charging = false;
+			*charge = 0;
+			return XRT_SUCCESS;
+		};
+	}
+
+	xrt_result_t get_tracked_pose(xrt_input_name name, uint64_t timestamp, xrt_space_relation *relation) override
+	{
+		std::lock_guard lk(ctx->devices_mut);
+		auto *device = backend_locked();
+		if (device) return device->get_tracked_pose(name, timestamp, relation);
+		*relation = XRT_SPACE_RELATION_ZERO;
+		return XRT_SUCCESS;
+	}
+};
+}
+
+void
+create_frame_controller_proxies(const std::shared_ptr<Context> &ctx, const std::string &steam_install,
+                                xrt_device *out_devices[2])
+{
+	auto hub = std::make_shared<FrameControllerHub>();
+	hub->ctx = ctx;
+	out_devices[0] = new FrameControllerProxy(hub, steam_install, true);
+	out_devices[1] = new FrameControllerProxy(hub, steam_install, false);
 }

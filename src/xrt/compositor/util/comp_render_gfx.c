@@ -22,6 +22,7 @@
 #include "render/render_interface.h"
 
 #include "util/comp_render.h"
+#include "util/comp_frame_passthrough.h"
 #include "util/comp_render_helpers.h"
 
 
@@ -703,6 +704,8 @@ comp_render_gfx_layers(struct render_gfx *render,
 	VkResult ret;
 
 	struct gfx_layer_state ls = XRT_STRUCT_INIT;
+	sf_comp_passthrough_prepare(d->passthrough, render, d);
+	sf_comp_passthrough_trace(d->passthrough, d, layers, layer_count);
 
 	// Compute MVP matrices per eye: populates gfx_layer_view_state elements in `ls`
 	// from `comp_render_dispatch_data *d`
@@ -837,6 +840,8 @@ comp_render_gfx_layers(struct render_gfx *render,
 		    viewport_data,     // viewport_data
 		    viewport_data);    // scissor_data
 
+		sf_comp_passthrough_draw(d->passthrough, render, view, &d->views[view].fov, &d->views[view].eye_pose, &d->views[view].world_pose_scanout_begin);
+
 		// Only source for data here, read only.
 		const struct gfx_layer_view_state *state = &ls.views[view];
 
@@ -947,7 +952,7 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 		    layer,                //
 		    vds);                 //
 
-	} else if (layer_count > 0) {
+	} else if (layer_count > 0 || d->passthrough) {
 		// Graphics layer squasher
 		if (fast_path) {
 			U_LOG_W("Wanted fast path but no projection layer, falling back to layer squasher.");

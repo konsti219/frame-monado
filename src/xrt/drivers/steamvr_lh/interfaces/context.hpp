@@ -19,6 +19,7 @@
 #include <thread>
 
 #include "openvr_driver.h"
+#include "util/u_logging.h"
 
 #include "settings.hpp"
 #include "resources.hpp"
@@ -27,12 +28,72 @@
 #include "server.hpp"
 #include "blockqueue.hpp"
 #include "paths.hpp"
+#include "mailbox.hpp"
 
 #include "xrt/xrt_tracking.h"
 
 struct xrt_input;
 class Device;
 class ControllerDevice;
+/*!
+ * IVRPropertiesInternal_001 (private): IVRProperties' 4 methods first, then unknown ones. driver_cv writes block
+ * queue block properties through it.
+ */
+class PropertiesInternal : public vr::IVRProperties
+{
+public:
+	explicit PropertiesInternal(vr::IVRProperties &properties) : p(properties) {}
+
+	vr::ETrackedPropertyError
+	ReadPropertyBatch(vr::PropertyContainerHandle_t h, vr::PropertyRead_t *b, uint32_t n) override
+	{
+		return p.ReadPropertyBatch(h, b, n);
+	}
+	vr::ETrackedPropertyError
+	WritePropertyBatch(vr::PropertyContainerHandle_t h, vr::PropertyWrite_t *b, uint32_t n) override
+	{
+		return p.WritePropertyBatch(h, b, n);
+	}
+	const char *
+	GetPropErrorNameFromEnum(vr::ETrackedPropertyError e) override
+	{
+		return p.GetPropErrorNameFromEnum(e);
+	}
+	vr::PropertyContainerHandle_t
+	TrackedDeviceToPropertyContainer(vr::TrackedDeviceIndex_t d) override
+	{
+		return p.TrackedDeviceToPropertyContainer(d);
+	}
+
+#define PROPERTIES_INTERNAL_UNKNOWN(n)                                                                                 \
+	virtual uint64_t Unknown##n(uint64_t a, uint64_t b, uint64_t c)                                               \
+	{                                                                                                              \
+		U_LOG_W("[stub] IVRPropertiesInternal_001 slot " #n " (%#lx, %#lx, %#lx)", (unsigned long)a,           \
+		        (unsigned long)b, (unsigned long)c);                                                         \
+		return 0;                                                                                      \
+	}
+	PROPERTIES_INTERNAL_UNKNOWN(4)
+	PROPERTIES_INTERNAL_UNKNOWN(5)
+	PROPERTIES_INTERNAL_UNKNOWN(6)
+	PROPERTIES_INTERNAL_UNKNOWN(7)
+	PROPERTIES_INTERNAL_UNKNOWN(8)
+	PROPERTIES_INTERNAL_UNKNOWN(9)
+	PROPERTIES_INTERNAL_UNKNOWN(10)
+	PROPERTIES_INTERNAL_UNKNOWN(11)
+	PROPERTIES_INTERNAL_UNKNOWN(12)
+	PROPERTIES_INTERNAL_UNKNOWN(13)
+	PROPERTIES_INTERNAL_UNKNOWN(14)
+	PROPERTIES_INTERNAL_UNKNOWN(15)
+	PROPERTIES_INTERNAL_UNKNOWN(16)
+	PROPERTIES_INTERNAL_UNKNOWN(17)
+	PROPERTIES_INTERNAL_UNKNOWN(18)
+	PROPERTIES_INTERNAL_UNKNOWN(19)
+#undef PROPERTIES_INTERNAL_UNKNOWN
+
+private:
+	vr::IVRProperties &p;
+};
+
 class Context final : public xrt_tracking_origin,
                       public vr::IVRDriverContext,
                       public vr::IVRServerDriverHost,
@@ -44,6 +105,8 @@ class Context final : public xrt_tracking_origin,
 {
 public:
 	Settings settings;
+	SettingsInternal settings_internal{settings};
+	PropertiesInternal properties_internal{*this};
 
 	struct Vec2Components
 	{
@@ -70,6 +133,11 @@ private:
 	Server server;
 	BlockQueue blockqueue;
 	Paths paths;
+	Mailbox mailbox;
+
+	// Install and user config folders of the loaded driver, read through the driver handle
+	std::string driver_install_path;
+	std::string driver_user_config_path;
 
 	uint64_t current_frame{0};
 
@@ -82,6 +150,12 @@ private:
 	size_t events_tail{0};
 	std::mutex event_queue_mut;
 	std::condition_variable event_popped;
+
+	// Separate from the device containers (HMD is 1, controllers follow)
+	static constexpr vr::PropertyContainerHandle_t DRIVER_HANDLE = 0x10000;
+
+	vr::ETrackedPropertyError
+	read_driver_properties(vr::PropertyRead_t *batch, uint32_t count);
 
 	Device *
 	prop_container_to_device(vr::PropertyContainerHandle_t handle);
@@ -108,6 +182,10 @@ public:
 	std::mutex devices_mut{};
 	class HmdDevice *hmd{nullptr};
 	class ControllerDevice *controller[16]{nullptr};
+	bool controller_ready[16]{false};
+	bool allow_late_controllers{false};
+	bool shutting_down{false};
+	void retire_controllers();
 
 	bool in_setup{true};
 	const u_logging_level log_level;

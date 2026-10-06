@@ -645,12 +645,14 @@ if(XRT_BUILD_DRIVER_STEAMVR_LIGHTHOUSE)
 		drv_steamvr_lh STATIC
 		steamvr_lh/steamvr_lh.cpp
 		steamvr_lh/device.cpp
+		steamvr_lh/eye_gaze.cpp
 		steamvr_lh/interfaces/driver_manager.cpp
 		steamvr_lh/interfaces/iobuffer.cpp
 		steamvr_lh/interfaces/resources.cpp
 		steamvr_lh/interfaces/settings.cpp
 		steamvr_lh/interfaces/blockqueue.cpp
 		steamvr_lh/interfaces/paths.cpp
+		steamvr_lh/interfaces/mailbox.cpp
 		)
 	target_link_libraries(
 		drv_steamvr_lh
@@ -667,6 +669,30 @@ if(XRT_BUILD_DRIVER_STEAMVR_LIGHTHOUSE)
 			xrt-external-vdf
 			${CMAKE_DL_LIBS}
 		)
+	if(XRT_HAVE_VULKAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+		add_library(
+			steamframe_vrclient SHARED
+			steamvr_lh/vrclient/vrclient.cpp
+			steamvr_lh/vrclient/passthrough.cpp
+			steamvr_lh/interfaces/blockqueue.cpp
+			steamvr_lh/interfaces/paths.cpp
+			)
+		target_include_directories(
+			steamframe_vrclient PRIVATE steamvr_lh/interfaces ../compositor/util
+			)
+		target_link_libraries(
+			steamframe_vrclient PRIVATE xrt-external-openvr xrt-external-cjson
+						   xrt-external-vulkan-headers xrt-pthreads ${CMAKE_DL_LIBS}
+			)
+		if(NOT XRT_HAVE_SYSTEM_CJSON)
+			target_sources(steamframe_vrclient PRIVATE ../../external/cjson/cjson/cJSON.c)
+		endif()
+		set_target_properties(
+			steamframe_vrclient PROPERTIES PREFIX "" OUTPUT_NAME vrclient
+						     CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
+			)
+		install(TARGETS steamframe_vrclient LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/monado COMPONENT Runtime)
+	endif()
 	list(APPEND ENABLED_HEADSET_DRIVERS steamvr_lh)
 endif()
 
