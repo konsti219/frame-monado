@@ -13,6 +13,7 @@
 #include "math/m_predict.h"
 #include "math/m_relation_history.h"
 #include "math/m_space.h"
+#include "math/m_vec3.h"
 
 #include "os/os_time.h"
 
@@ -48,6 +49,10 @@
 #include <thread>
 #include <algorithm>
 #include <map>
+#include <climits>
+#include <mutex>
+#include <tuple>
+#include <unordered_map>
 
 #define DEV_ERR(...) U_LOG_IFL_E(ctx->log_level, __VA_ARGS__)
 #define DEV_WARN(...) U_LOG_IFL_W(ctx->log_level, __VA_ARGS__)
@@ -946,6 +951,30 @@ void
 Device::get_pose(uint64_t at_timestamp_ns, xrt_space_relation *out_relation)
 {
 	m_relation_history_get(this->relation_hist, at_timestamp_ns, out_relation);
+	static const bool pose_log = getenv("SF_POSE_LOG") != nullptr;
+	if (pose_log) {
+		// how far past the newest driver pose callers ask, largest per second
+		static std::mutex log_mut;
+		static std::unordered_map<const void *, std::tuple<int64_t, int64_t, int64_t>> stats;
+		std::lock_guard lk(log_mut);
+		auto &[last_ns, max_ahead, min_ahead] = stats[this];
+		int64_t latest_ns = 0;
+		xrt_space_relation latest;
+		if (m_relation_history_get_latest(relation_hist, &latest_ns, &latest)) {
+			int64_t ahead = (int64_t)at_timestamp_ns - latest_ns;
+			max_ahead = last_ns ? std::max(max_ahead, ahead) : ahead;
+			min_ahead = last_ns ? std::min(min_ahead, ahead) : ahead;
+		}
+		int64_t now_ns = chrono_timestamp_ns();
+		if (now_ns - last_ns > 1000000000) {
+			if (last_ns)
+				U_LOG_I("[pose] %s: queried %.1f..%.1f ms past the newest pose", serial, min_ahead / 1e6,
+				        max_ahead / 1e6);
+			last_ns = now_ns;
+			max_ahead = INT64_MIN;
+			min_ahead = INT64_MAX;
+		}
+	}
 }
 
 xrt_result_t
@@ -1454,7 +1483,54 @@ Device::update_pose(const vr::DriverPose_t &newPose) const
 	math_quat_rotate_vec3(&chaperone.orientation, &relation.linear_velocity, &relation.linear_velocity);
 	math_quat_rotate_vec3(&chaperone.orientation, &relation.angular_velocity, &relation.angular_velocity);
 
-	const int64_t ts = os_monotonic_get_ns() + time_s_to_ns(newPose.poseTimeOffset);
+	const int64_t now_ns = os_monotonic_get_ns();
+	const int64_t ts = now_ns + time_s_to_ns(newPose.poseTimeOffset);
+
+	// SF_POSE_TRACE=<file>: 20 s of the HMD's raw driver poses, to check the velocity frames offline
+	static FILE *pose_trace = [] {
+		const char *path = getenv("SF_POSE_TRACE");
+		FILE *f = path ? fopen(path, "w") : nullptr;
+		if (f)
+			fprintf(f, "ts_ns,offset_s,qw,qx,qy,qz,px,py,pz,vx,vy,vz,wx,wy,wz,hqw,hqx,hqy,hqz,result\n");
+		return f;
+	}();
+	static int64_t pose_trace_end = 0;
+	if (pose_trace && newPose.result == vr::TrackingResult_Running_OK && std::strncmp(serial, "FP", 2) == 0) {
+		static std::mutex trace_mut;
+		std::lock_guard lk(trace_mut);
+		const double *w = newPose.vecAngularVelocity;
+		if (!pose_trace_end && w[0] * w[0] + w[1] * w[1] + w[2] * w[2] > 0.25) // starts at ~30 deg/s
+			pose_trace_end = now_ns + 20000000000;
+		if (pose_trace_end && now_ns < pose_trace_end) {
+			const auto &q = newPose.qRotation, &h = newPose.qDriverFromHeadRotation;
+			fprintf(pose_trace, "%ld,%.6f,%.7f,%.7f,%.7f,%.7f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f,%d\n",
+			        (long)ts, newPose.poseTimeOffset, q.w, q.x, q.y, q.z, newPose.vecPosition[0],
+			        newPose.vecPosition[1], newPose.vecPosition[2], newPose.vecVelocity[0], newPose.vecVelocity[1],
+			        newPose.vecVelocity[2], newPose.vecAngularVelocity[0], newPose.vecAngularVelocity[1],
+			        newPose.vecAngularVelocity[2], h.w, h.x, h.y, h.z, newPose.result);
+		} else if (pose_trace_end > 0) {
+			fclose(pose_trace);
+			pose_trace = nullptr;
+			U_LOG_I("[pose] trace done");
+		}
+	}
+
+	// SF_POSE_LOG=1: once a second per device, what the driver reports (to check for double prediction)
+	static const bool pose_log = getenv("SF_POSE_LOG") != nullptr;
+	if (pose_log) {
+		static std::mutex log_mut;
+		static std::unordered_map<const void *, std::pair<int64_t, int>> last;
+		std::lock_guard lk(log_mut);
+		auto &[last_ns, count] = last[this];
+		count++;
+		if (now_ns - last_ns > 1000000000) {
+			U_LOG_I("[pose] %s: %d poses/s, poseTimeOffset %.1f ms, |v| %.2f m/s, |w| %.1f deg/s, result %d",
+			        serial, count, newPose.poseTimeOffset * 1e3, m_vec3_len(relation.linear_velocity),
+			        m_vec3_len(relation.angular_velocity) * 57.2958, newPose.result);
+			last_ns = now_ns;
+			count = 0;
+		}
+	}
 
 	m_relation_history_push(relation_hist, &relation, ts);
 }

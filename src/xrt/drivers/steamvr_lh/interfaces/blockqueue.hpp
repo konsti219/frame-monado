@@ -13,6 +13,7 @@
 
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 /** Definitions missing from C++ header, present in C */
@@ -96,6 +97,9 @@ public:
 	write_block_properties(vr::PropertyContainerHandle_t block, vr::PropertyWrite_t *batch, uint32_t count);
 	vr::ETrackedPropertyError
 	read_block_properties(vr::PropertyContainerHandle_t block, vr::PropertyRead_t *batch, uint32_t count);
+	//! Queue handles are property containers too: "/<name>/blockDataSize" etc., name = last path component
+	vr::ETrackedPropertyError
+	read_queue_properties(vr::PropertyContainerHandle_t queue, vr::PropertyRead_t *batch, uint32_t count);
 
 private:
 	// Keeps block handles apart from device property containers (small integers)
@@ -107,6 +111,7 @@ private:
 		size_t size;
 		bool creator;
 		uint64_t last_read; // sequence of the last block this handle read
+		std::string name;   // last path component, e.g. "meshData"
 	};
 	std::mutex mut;
 	std::vector<std::unique_ptr<Queue>> queues; // handle - 1 indexes this

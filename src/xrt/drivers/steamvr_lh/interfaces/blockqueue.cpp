@@ -8,6 +8,7 @@
  */
 
 #include "blockqueue.hpp"
+#include "paths.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -123,6 +124,45 @@ BlockQueue::~BlockQueue()
 	}
 }
 
+static std::string
+queue_name(const char *path)
+{
+	const char *slash = std::strrchr(path, '/');
+	return slash ? slash + 1 : path;
+}
+
+vr::ETrackedPropertyError
+BlockQueue::read_queue_properties(vr::PropertyContainerHandle_t queue, vr::PropertyRead_t *batch, uint32_t count)
+{
+	Queue *q = get(queue);
+	if (q == nullptr) {
+		return vr::TrackedProp_InvalidContainer;
+	}
+	const std::pair<const char *, uint32_t> props[] = {{"blockDataSize", q->shared->data_size},
+	                                                   {"blockHeaderSize", q->shared->header_size},
+	                                                   {"blockCount", q->shared->count}};
+	for (uint32_t i = 0; i < count; i++) {
+		vr::PropertyRead_t &r = batch[i];
+		r.eError = vr::TrackedProp_UnknownProperty;
+		for (const auto &[name, value] : props) {
+			std::string path = "/" + q->name + "/" + name;
+			if ((uint32_t)r.prop != (uint32_t)Paths::handle_for(path.c_str())) {
+				continue;
+			}
+			r.unTag = vr::k_unInt32PropertyTag;
+			r.unRequiredBufferSize = sizeof(int32_t);
+			if (r.pvBuffer == nullptr || r.unBufferSize < sizeof(int32_t)) {
+				r.eError = vr::TrackedProp_BufferTooSmall;
+			} else {
+				int32_t v = (int32_t)value;
+				std::memcpy(r.pvBuffer, &v, sizeof(v));
+				r.eError = vr::TrackedProp_Success;
+			}
+		}
+	}
+	return vr::TrackedProp_Success;
+}
+
 BlockQueue::Queue *
 BlockQueue::get(vr::PropertyContainerHandle_t handle)
 {
@@ -145,16 +185,16 @@ BlockQueue::Create(vr::PropertyContainerHandle_t *pulQueueHandle,
 		return vr::EBlockQueueError_BlockQueueError_InvalidParam;
 	}
 	std::string name = shm_name(pchPath);
+	BlockQueueShared probe{};
+	probe.data_size = unBlockDataSize;
+	probe.header_size = unBlockHeaderSize;
+	size_t size = ((sizeof(BlockQueueShared) + 63) & ~(size_t)63) + unBlockCount * probe.block_size();
 	// A queue left behind by a process that died is replaced
 	shm_unlink(name.c_str());
 	int fd = shm_open(name.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
 	if (fd < 0) {
 		return vr::EBlockQueueError_BlockQueueError_InternalError;
 	}
-	BlockQueueShared probe{};
-	probe.data_size = unBlockDataSize;
-	probe.header_size = unBlockHeaderSize;
-	size_t size = ((sizeof(BlockQueueShared) + 63) & ~(size_t)63) + unBlockCount * probe.block_size();
 	if (ftruncate(fd, size) != 0) {
 		close(fd);
 		return vr::EBlockQueueError_BlockQueueError_InternalError;
@@ -172,7 +212,7 @@ BlockQueue::Create(vr::PropertyContainerHandle_t *pulQueueHandle,
 	shared->magic = MAGIC;
 
 	std::lock_guard lk(mut);
-	queues.push_back(std::make_unique<Queue>(Queue{shared, size, true, 0}));
+	queues.push_back(std::make_unique<Queue>(Queue{shared, size, true, 0, queue_name(pchPath)}));
 	*pulQueueHandle = queues.size();
 	return vr::EBlockQueueError_BlockQueueError_None;
 }
@@ -203,7 +243,7 @@ BlockQueue::Connect(vr::PropertyContainerHandle_t *pulQueueHandle, char *pchPath
 	std::lock_guard lk(mut);
 	// Start before the oldest block still in the ring: XRService connects after driver_cv already wrote the
 	// controller connect events, and has to read them
-	queues.push_back(std::make_unique<Queue>(Queue{shared, (size_t)size, false, 0}));
+	queues.push_back(std::make_unique<Queue>(Queue{shared, (size_t)size, false, 0, queue_name(pchPath)}));
 	*pulQueueHandle = queues.size();
 	return vr::EBlockQueueError_BlockQueueError_None;
 }

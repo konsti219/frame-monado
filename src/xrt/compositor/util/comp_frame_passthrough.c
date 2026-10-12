@@ -37,9 +37,14 @@ struct pt_dma
 {
 	VkBuffer buffer;
 	VkDeviceMemory memory;
+	uint32_t memory_type;
 	int remote_fd, fd;
 	uint64_t size;
 	bool attempted, synced;
+	// The plane as a linear image on the same memory, sampled in place instead of copied
+	VkImage image;
+	VkImageView view;
+	bool image_failed, image_used;
 };
 struct pt_camera
 {
@@ -48,13 +53,46 @@ struct pt_camera
 	uint8_t metadata[SF_PT_METADATA_SIZE];
 	uint64_t seq, map_seq, time;
 	struct sf_pt_frame *held;
+	// Sampling in place: the frame stays claimed until a newer one replaces it
+	bool direct;
+	struct sf_pt_frame *direct_frame;
+	VkImageView direct_views[2];
 	struct pt_dma dma[SF_PT_MAX_FRAMES][2];
 };
+// RoomView3D depth mesh from XRService, read straight from the block queue driver_cv creates in this process
+#define SF_MESH_DATA_PATH "/dev/shm/sfbq_xrservice_roomview3d_meshData"
+#define SF_MESH_LAYOUT_PATH "/dev/shm/sfbq_xrservice_roomview3d_meshLayout"
+#define SF_MESH_MAX_AGE_S 0.5
+#define SF_PUSH_SIZE (52 * sizeof(float))
+
+struct pt_queue
+{
+	uint8_t *map;
+	size_t size;
+};
+struct pt_mesh
+{
+	struct pt_queue data, layout;
+	uint32_t width, height; // vertex grid, from the layout's triangle indices
+	struct pt_texture depth;
+	uint64_t seq;
+	double time; // posePredictionBaseTime, CLOCK_MONOTONIC_RAW seconds
+	float focal, cx, cy;
+	float mesh_from_world[12]; // 3x4 rows
+	bool valid, logged;
+};
+
 struct sf_comp_passthrough
 {
 	struct vk_bundle *vk;
+	struct pt_mesh mesh;
+	VkFormat mesh_format;
+	bool mesh_enabled, mesh_debug; // SF_PASSTHROUGH_MESH=0 / debug (tints what comes from the mesh green)
 	struct sf_pt_shm *shm;
-	bool wanted, ready, gpu_copy;
+	bool wanted, ready, gpu_copy, direct_sampling, dmabuf_sync;
+	// Stream chosen for the next frame and the one the textures currently hold (SF_PT_TYPE_*)
+	int type, shown;
+	uint64_t want_ns;
 	PFN_vkGetMemoryFdPropertiesKHR get_fd_properties;
 	int pid;
 	uint64_t prepare_ns, prepare_count, log_ns;
@@ -204,9 +242,14 @@ sf_comp_passthrough_create(struct vk_bundle *vk)
 	if (!pt)
 		return NULL;
 	pt->vk = vk;
+	pt->type = pt->shown = SF_PT_TYPE_COLOR;
 	pt->get_fd_properties =
 	    (PFN_vkGetMemoryFdPropertiesKHR)vk->vkGetDeviceProcAddr(vk->device, "vkGetMemoryFdPropertiesKHR");
 	pt->gpu_copy = vk->has_EXT_external_memory_dma_buf && pt->get_fd_properties && !getenv("SF_PASSTHROUGH_CPU");
+	// SF_PASSTHROUGH_DIRECT=0 copies every camera frame into a texture instead of sampling it in place
+	const char *direct_option = getenv("SF_PASSTHROUGH_DIRECT");
+	pt->direct_sampling = !direct_option || strcmp(direct_option, "0");
+	pt->dmabuf_sync = getenv("SF_PASSTHROUGH_DMABUF_SYNC") != NULL;
 	if (pt->gpu_copy) {
 		VkPhysicalDeviceExternalBufferInfo info = {
 		    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
@@ -221,15 +264,31 @@ sf_comp_passthrough_create(struct vk_bundle *vk)
 		               !(props.externalMemoryProperties.externalMemoryFeatures &
 		                 VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT);
 	}
-	VkDescriptorSetLayoutBinding bindings[3];
-	for (uint32_t i = 0; i < 3; i++)
-		bindings[i] = (VkDescriptorSetLayoutBinding){i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
-		                                             VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
+	VkPhysicalDeviceProperties props;
+	vk->vkGetPhysicalDeviceProperties(vk->physical_device, &props);
+	if (props.limits.maxPushConstantsSize < SF_PUSH_SIZE) {
+		U_LOG_W("Passthrough needs %zu bytes of push constants, the device has %u", SF_PUSH_SIZE,
+		        props.limits.maxPushConstantsSize);
+		goto fail;
+	}
+	VkFormatProperties format;
+	vk->vkGetPhysicalDeviceFormatProperties(vk->physical_device, VK_FORMAT_R32_SFLOAT, &format);
+	pt->mesh_format = (format.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)
+	                      ? VK_FORMAT_R32_SFLOAT
+	                      : VK_FORMAT_R16_SFLOAT;
+	const char *mesh_option = getenv("SF_PASSTHROUGH_MESH");
+	pt->mesh_enabled = !mesh_option || strcmp(mesh_option, "0");
+	pt->mesh_debug = mesh_option && !strcmp(mesh_option, "debug");
+	VkDescriptorSetLayoutBinding bindings[4];
+	for (uint32_t i = 0; i < 4; i++)
+		bindings[i] = (VkDescriptorSetLayoutBinding){
+		    i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
+		    i < 2 ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT, NULL};
 	VkDescriptorSetLayoutCreateInfo set = {
-	    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 3, .pBindings = bindings};
+	    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 4, .pBindings = bindings};
 	if (vk->vkCreateDescriptorSetLayout(vk->device, &set, NULL, &pt->set_layout) != VK_SUCCESS)
 		goto fail;
-	VkPushConstantRange push = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 128};
+	VkPushConstantRange push = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, SF_PUSH_SIZE};
 	VkPipelineLayoutCreateInfo layout = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 	                                     .setLayoutCount = 1,
 	                                     .pSetLayouts = &pt->set_layout,
@@ -237,7 +296,7 @@ sf_comp_passthrough_create(struct vk_bundle *vk)
 	                                     .pPushConstantRanges = &push};
 	if (vk->vkCreatePipelineLayout(vk->device, &layout, NULL, &pt->layout) != VK_SUCCESS)
 		goto fail;
-	VkDescriptorPoolSize size = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6};
+	VkDescriptorPoolSize size = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8};
 	VkDescriptorPoolCreateInfo pool = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 	                                   .maxSets = 2,
 	                                   .poolSizeCount = 1,
@@ -258,6 +317,36 @@ sf_comp_passthrough_create(struct vk_bundle *vk)
 fail:
 	sf_comp_passthrough_destroy(&pt);
 	return NULL;
+}
+
+static const char *const stream_names[SF_PT_TYPE_COUNT] = {"IR tracking", "color"};
+
+// Newest frame submission (CLOCK_MONOTONIC) of a stream, or 0
+static uint64_t
+newest_submit(struct sf_pt_type *t)
+{
+	uint64_t newest = 0;
+	uint32_t count = t->frame_count < SF_PT_MAX_FRAMES ? t->frame_count : SF_PT_MAX_FRAMES;
+	for (int cam = 0; t->initialized && cam < SF_PT_CAMERA_COUNT; cam++)
+		for (uint32_t i = 0; i < count; i++)
+			if (t->cameras[cam].frames[i].submit_ns > newest)
+				newest = t->cameras[cam].frames[i].submit_ns;
+	return newest;
+}
+
+// Prefers the Arcturus color cameras and falls back to the IR tracking cameras while it delivers nothing
+static int
+choose_stream(struct sf_comp_passthrough *pt, uint64_t now)
+{
+	const char *forced = getenv("SF_PASSTHROUGH_STREAM");
+	if (forced)
+		return strcmp(forced, "tracking") ? SF_PT_TYPE_COLOR : SF_PT_TYPE_TRACKING;
+	uint64_t color = newest_submit(&pt->shm->types[SF_PT_TYPE_COLOR]);
+	if (color && now > color && now - color < 1000000000ull)
+		return SF_PT_TYPE_COLOR;
+	if (now - pt->want_ns < 1000000000ull)
+		return pt->type;
+	return SF_PT_TYPE_TRACKING;
 }
 
 bool
@@ -282,14 +371,33 @@ sf_comp_passthrough_request(struct sf_comp_passthrough *pt, bool wanted)
 	    pt->shm->version != SF_PT_VERSION || pt->shm->shm_size != sizeof(*pt->shm) || pt->shm->pid <= 0 ||
 	    kill(pt->shm->pid, 0) != 0)
 		return false;
+	uint64_t now = os_monotonic_get_ns();
+	if (!wanted)
+		pt->want_ns = 0;
+	else if (!pt->want_ns)
+		pt->want_ns = now;
+	if (wanted) {
+		int type = choose_stream(pt, now);
+		if (type != pt->type)
+			U_LOG_I("Passthrough switching to the %s cameras", stream_names[type]);
+		pt->type = type;
+	}
+	const char *forced = getenv("SF_PASSTHROUGH_STREAM");
+	bool color_reader = wanted && !(forced && !strcmp(forced, "tracking"));
 	__atomic_store_n(&pt->shm->active, wanted, __ATOMIC_RELEASE);
-	__atomic_store_n(&pt->shm->types[SF_PT_TYPE_COLOR].reader, wanted, __ATOMIC_RELEASE);
+	__atomic_store_n(&pt->shm->types[SF_PT_TYPE_COLOR].reader, color_reader, __ATOMIC_RELEASE);
+	__atomic_store_n(&pt->shm->types[SF_PT_TYPE_TRACKING].reader, wanted && pt->type == SF_PT_TYPE_TRACKING,
+	                 __ATOMIC_RELEASE);
 	return wanted;
 }
 
 static void
 dma_destroy(struct sf_comp_passthrough *pt, struct pt_dma *dma)
 {
+	if (dma->view)
+		pt->vk->vkDestroyImageView(pt->vk->device, dma->view, NULL);
+	if (dma->image)
+		pt->vk->vkDestroyImage(pt->vk->device, dma->image, NULL);
 	if (dma->buffer)
 		pt->vk->vkDestroyBuffer(pt->vk->device, dma->buffer, NULL);
 	if (dma->memory)
@@ -348,6 +456,7 @@ dma_import(struct sf_comp_passthrough *pt, struct pt_dma *dma, int remote_fd)
 	                                   .pNext = &import,
 	                                   .allocationSize = size,
 	                                   .memoryTypeIndex = __builtin_ctz(bits)};
+	dma->memory_type = __builtin_ctz(bits);
 	if (vk->vkAllocateMemory(vk->device, &allocation, NULL, &dma->memory) != VK_SUCCESS) {
 		close(imported_fd);
 		goto fail;
@@ -361,6 +470,82 @@ fail:
 	dma->remote_fd = remote_fd;
 	U_LOG_W("Passthrough DMA-BUF import failed; using CPU upload for this buffer");
 	return false;
+}
+
+// A camera plane as a linear (DRM_FORMAT_MOD_LINEAR) image on its imported dma-buf memory
+static bool
+dma_image(struct sf_comp_passthrough *pt,
+          struct pt_dma *dma,
+          uint32_t width,
+          uint32_t height,
+          VkFormat format,
+          uint32_t offset,
+          uint32_t pitch)
+{
+	if (dma->view)
+		return true;
+	struct vk_bundle *vk = pt->vk;
+	if (dma->image_failed || !dma->memory || !vk->has_EXT_image_drm_format_modifier)
+		return false;
+	dma->image_failed = true;
+	VkSubresourceLayout layout = {.offset = offset, .rowPitch = pitch};
+	VkImageDrmFormatModifierExplicitCreateInfoEXT modifier = {
+	    .sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
+	    .drmFormatModifier = 0, // DRM_FORMAT_MOD_LINEAR
+	    .drmFormatModifierPlaneCount = 1,
+	    .pPlaneLayouts = &layout};
+	VkExternalMemoryImageCreateInfo external = {.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+	                                            .pNext = &modifier,
+	                                            .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT};
+	VkImageCreateInfo info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+	                          .pNext = &external,
+	                          .imageType = VK_IMAGE_TYPE_2D,
+	                          .format = format,
+	                          .extent = {width, height, 1},
+	                          .mipLevels = 1,
+	                          .arrayLayers = 1,
+	                          .samples = VK_SAMPLE_COUNT_1_BIT,
+	                          .tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
+	                          .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+	                          .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	                          .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+	if (vk->vkCreateImage(vk->device, &info, NULL, &dma->image) != VK_SUCCESS)
+		goto fail;
+	VkMemoryRequirements req;
+	vk->vkGetImageMemoryRequirements(vk->device, dma->image, &req);
+	if (!(req.memoryTypeBits & (1u << dma->memory_type)) || req.size > dma->size ||
+	    vk->vkBindImageMemory(vk->device, dma->image, dma->memory, 0) != VK_SUCCESS)
+		goto fail;
+	if (vk_create_view(vk, dma->image, VK_IMAGE_VIEW_TYPE_2D, format,
+	                   (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, &dma->view) != VK_SUCCESS)
+		goto fail;
+	dma->image_failed = false;
+	return true;
+fail:
+	if (dma->image)
+		vk->vkDestroyImage(vk->device, dma->image, NULL);
+	dma->image = VK_NULL_HANDLE;
+	static bool reported;
+	if (!reported)
+		U_LOG_W("Passthrough: sampling camera frames in place failed, copying them instead");
+	reported = true;
+	return false;
+}
+
+static void
+release_frame(struct sf_comp_passthrough *pt, struct sf_pt_frame *f)
+{
+	if (f && pt->shm && pt->pid == pt->shm->pid &&
+	    pt->generation == __atomic_load_n(&pt->shm->types[pt->shown].generation, __ATOMIC_ACQUIRE))
+		__atomic_store_n(&f->state, SF_PT_FRAME_FREE, __ATOMIC_RELEASE);
+}
+
+static void
+release_direct(struct sf_comp_passthrough *pt, struct pt_camera *c)
+{
+	release_frame(pt, c->direct_frame);
+	c->direct_frame = NULL;
+	c->direct = false;
 }
 
 void
@@ -379,9 +564,9 @@ sf_comp_passthrough_finish(struct sf_comp_passthrough *pt)
 					dma->synced = false;
 				}
 			}
-		if (c->held && pt->pid == pt->shm->pid &&
-		    pt->generation == __atomic_load_n(&pt->shm->types[SF_PT_TYPE_COLOR].generation, __ATOMIC_ACQUIRE))
-			__atomic_store_n(&c->held->state, SF_PT_FRAME_FREE, __ATOMIC_RELEASE);
+		// a frame sampled in place stays claimed until prepare replaces it
+		if (c->held != c->direct_frame)
+			release_frame(pt, c->held);
 		c->held = NULL;
 	}
 }
@@ -392,8 +577,10 @@ gpu_planes(struct sf_comp_passthrough *pt,
            struct sf_pt_type *t,
            struct sf_pt_frame *f,
            int index,
-           VkCommandBuffer cmd)
+           VkCommandBuffer cmd,
+           bool *direct)
 {
+	*direct = false;
 	if (!pt->gpu_copy)
 		return false;
 	for (int plane = 0; plane < 2; plane++) {
@@ -405,10 +592,45 @@ gpu_planes(struct sf_comp_passthrough *pt,
 		if (!dma_import(pt, dma, f->fds[plane]) || t->planes[plane].stride < row ||
 		    t->planes[plane].stride % texture->bytes || t->planes[plane].offset % 4 || end > dma->size)
 			return false;
-		struct dma_buf_sync sync = {DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ};
-		if (ioctl(dma->fd, DMA_BUF_IOCTL_SYNC, &sync) != 0)
-			return false;
-		dma->synced = true;
+		// CPU cache maintenance over the whole buffer, only needed for CPU access; frames are complete once XRService
+		// marks them latest
+		if (pt->dmabuf_sync) {
+			struct dma_buf_sync sync = {DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ};
+			if (ioctl(dma->fd, DMA_BUF_IOCTL_SYNC, &sync) != 0)
+				return false;
+			dma->synced = true;
+		}
+	}
+	if (pt->direct_sampling) {
+		bool ok = true;
+		for (int plane = 0; plane < 2 && ok; plane++) {
+			struct pt_texture *texture = &c->textures[plane];
+			ok = dma_image(pt, &c->dma[index][plane], texture->width, texture->height,
+			               plane ? VK_FORMAT_R8G8_UNORM : VK_FORMAT_R8_UNORM, t->planes[plane].offset,
+			               t->planes[plane].stride);
+		}
+		if (ok) {
+			for (int plane = 0; plane < 2; plane++) {
+				struct pt_dma *dma = &c->dma[index][plane];
+				VkImageMemoryBarrier barrier = {
+				    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+				    .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+				    .oldLayout = dma->image_used ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+				                                 : VK_IMAGE_LAYOUT_UNDEFINED,
+				    .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
+				    .dstQueueFamilyIndex = pt->vk->main_queue->family_index,
+				    .image = dma->image,
+				    .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+				pt->vk->vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0, NULL,
+				                             1, &barrier);
+				dma->image_used = true;
+				c->direct_views[plane] = dma->view;
+			}
+			*direct = true;
+			return true;
+		}
 	}
 	for (int plane = 0; plane < 2; plane++) {
 		struct pt_dma *dma = &c->dma[index][plane];
@@ -475,6 +697,205 @@ copy_plane(
 	return ok;
 }
 
+// Block queue layout as in steamvr_lh's blockqueue.cpp: a 1064-byte header (sequence of block i at 40 + 16 i),
+// then 64-byte aligned blocks of header_size + data_size; property tables at the start of each block header
+#define SF_QUEUE_BASE 1088
+#define SF_QUEUE_HEADER_MAGIC 0xacbdf123u
+
+static bool
+queue_open(struct pt_queue *q, const char *path)
+{
+	if (q->map)
+		return true;
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+	struct stat st;
+	if (fd < 0)
+		return false;
+	if (fstat(fd, &st) == 0 && st.st_size > SF_QUEUE_BASE) {
+		void *p = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+		if (p != MAP_FAILED) {
+			q->map = p;
+			q->size = st.st_size;
+		}
+	}
+	close(fd);
+	return q->map != NULL;
+}
+
+static void
+queue_close(struct pt_queue *q)
+{
+	if (q->map)
+		munmap(q->map, q->size);
+	q->map = NULL;
+}
+
+// Newest published block of a queue: its header, data size and sequence, or NULL
+static const uint8_t *
+queue_newest(struct pt_queue *q, uint32_t *header_size, uint32_t *data_size, uint64_t *seq, uint32_t *index)
+{
+	const uint32_t *h = (const uint32_t *)q->map;
+	uint32_t count = h[3];
+	*data_size = h[1];
+	*header_size = h[2];
+	uint64_t block = ((uint64_t)*header_size + *data_size + 63) & ~(uint64_t)63;
+	if (!count || count > 64 || SF_QUEUE_BASE + count * block > q->size)
+		return NULL;
+	*seq = 0;
+	for (uint32_t i = 0; i < count; i++) {
+		uint64_t s = __atomic_load_n((const uint64_t *)(q->map + 40 + 16 * i), __ATOMIC_ACQUIRE);
+		if (s > *seq) {
+			*seq = s;
+			*index = i;
+		}
+	}
+	return *seq ? q->map + SF_QUEUE_BASE + *index * block : NULL;
+}
+
+static uint64_t
+queue_block_seq(struct pt_queue *q, uint32_t index)
+{
+	return __atomic_load_n((const uint64_t *)(q->map + 40 + 16 * index), __ATOMIC_ACQUIRE);
+}
+
+// A block header property by path, as XRService names them (FNV-1a path handles, as the vrclient shim makes them)
+static const void *
+queue_property(const uint8_t *header, uint32_t header_size, const char *path, uint32_t size)
+{
+	const uint32_t *table = (const uint32_t *)header;
+	if (table[2] != SF_QUEUE_HEADER_MAGIC || 16 + table[0] * 16 > header_size)
+		return NULL;
+	uint32_t hash = 2166136261u;
+	for (const char *c = path; *c; c++)
+		hash = (hash ^ (uint8_t)*c) * 16777619u;
+	hash = 0x10000000u | (hash & 0x0fffffffu);
+	for (uint32_t i = 0; i < table[0]; i++) {
+		const uint32_t *e = table + 4 + i * 4; // prop, tag, size, offset
+		if (e[0] == hash && e[2] == size && e[3] + size <= header_size)
+			return header + e[3];
+	}
+	return NULL;
+}
+
+static uint16_t
+half_from_float(float value)
+{
+	uint32_t f;
+	memcpy(&f, &value, sizeof(f));
+	uint32_t sign = (f >> 16) & 0x8000, exponent = (f >> 23) & 0xff, mantissa = f & 0x7fffff;
+	if (exponent < 113)
+		return sign;
+	if (exponent > 142)
+		return sign | 0x7c00;
+	return sign | ((exponent - 112) << 10) | (mantissa >> 13);
+}
+
+// Grid size from the layout's first triangle (0, width, 1) and highest index
+static bool
+mesh_layout(struct pt_mesh *m)
+{
+	uint32_t header_size, data_size, index;
+	uint64_t seq;
+	const uint8_t *block = queue_newest(&m->layout, &header_size, &data_size, &seq, &index);
+	if (!block)
+		return false;
+	const uint32_t *indices = (const uint32_t *)(block + header_size);
+	const uint32_t *count_prop = queue_property(block, header_size, "/meshLayout/indexCount", 4);
+	uint32_t count = count_prop ? *count_prop : 0;
+	if (count < 3 || count > data_size / 4)
+		return false;
+	uint32_t highest = 0;
+	for (uint32_t i = 0; i < count; i++)
+		if (indices[i] > highest)
+			highest = indices[i];
+	uint32_t width = indices[1];
+	if (width < 2 || width > 1024 || (highest + 1) % width || (highest + 1) / width < 2)
+		return false;
+	m->width = width;
+	m->height = (highest + 1) / width;
+	return true;
+}
+
+static void
+mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
+{
+	struct pt_mesh *m = &pt->mesh;
+	struct timespec raw;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &raw);
+	double now = raw.tv_sec + raw.tv_nsec * 1e-9;
+	m->valid = m->valid && now - m->time < SF_MESH_MAX_AGE_S;
+	if (!pt->mesh_enabled || !queue_open(&m->data, SF_MESH_DATA_PATH) || !queue_open(&m->layout, SF_MESH_LAYOUT_PATH))
+		return;
+	if (!m->width && !mesh_layout(m))
+		return;
+	uint32_t header_size, data_size, index;
+	uint64_t seq;
+	const uint8_t *block = queue_newest(&m->data, &header_size, &data_size, &seq, &index);
+	if (!block || seq == m->seq || (uint64_t)m->width * m->height * 12 > data_size)
+		return;
+	const double *time = queue_property(block, header_size, "/meshData/posePredictionBaseTime", 8);
+	const float *pose = queue_property(block, header_size, "/meshData/rawFromMeshPose", 48);
+	if (!time || !pose || now - *time >= SF_MESH_MAX_AGE_S)
+		return;
+	uint32_t vertices = m->width * m->height;
+	VkFormat format = pt->mesh_format;
+	if (!texture_create(pt, &m->depth, m->width, m->height, format == VK_FORMAT_R32_SFLOAT ? 4 : 2, format))
+		return;
+	// The vertices lie on the rays of a pinhole grid (x/z linear in the column, y/z in the row): fit it while
+	// copying out the depths
+	const float *v = (const float *)(block + header_size);
+	double n = 0, sg[2] = {0}, sgg[2] = {0}, sa[2] = {0}, sga[2] = {0};
+	for (uint32_t i = 0; i < vertices; i++) {
+		float z = v[i * 3 + 2];
+		if (format == VK_FORMAT_R32_SFLOAT)
+			((float *)m->depth.staging.data)[i] = z;
+		else
+			((uint16_t *)m->depth.staging.data)[i] = half_from_float(z);
+		if (!(z > 0.05f) || !isfinite(z) || i % 7)
+			continue;
+		double g[2] = {i % m->width, i / m->width}, a[2] = {v[i * 3] / z, v[i * 3 + 1] / z};
+		n++;
+		for (int k = 0; k < 2; k++) {
+			sg[k] += g[k];
+			sgg[k] += g[k] * g[k];
+			sa[k] += a[k];
+			sga[k] += g[k] * a[k];
+		}
+	}
+	float pose_copy[12];
+	memcpy(pose_copy, pose, sizeof(pose_copy));
+	double base_time = *time;
+	if (queue_block_seq(&m->data, index) != seq || n < 100)
+		return; // overwritten while copying, or nothing usable
+	double focal[2], centre[2];
+	for (int k = 0; k < 2; k++) {
+		double slope = (n * sga[k] - sg[k] * sa[k]) / (n * sgg[k] - sg[k] * sg[k]);
+		double offset = (sa[k] - slope * sg[k]) / n;
+		focal[k] = 1 / slope;
+		centre[k] = -offset / slope;
+	}
+	if (!isfinite(focal[0]) || !isfinite(focal[1]) || focal[0] <= 0 || fabs(focal[0] / focal[1] - 1) > 0.02)
+		return;
+	texture_upload(pt, &m->depth, cmd, VK_NULL_HANDLE, 0, 0);
+	m->focal = (focal[0] + focal[1]) / 2;
+	m->cx = centre[0];
+	m->cy = centre[1];
+	// mesh_from_world = inverse of rawFromMeshPose (rotation rows, then translation)
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++)
+			m->mesh_from_world[r * 4 + c] = pose_copy[c * 4 + r];
+		m->mesh_from_world[r * 4 + 3] =
+		    -(pose_copy[r] * pose_copy[3] + pose_copy[4 + r] * pose_copy[7] + pose_copy[8 + r] * pose_copy[11]);
+	}
+	m->seq = seq;
+	m->time = base_time;
+	m->valid = true;
+	if (!m->logged)
+		U_LOG_I("Passthrough room mesh: %ux%u grid, focal %.2f cells, centre %.2f %.2f, %s", m->width, m->height,
+		        m->focal, m->cx, m->cy, format == VK_FORMAT_R32_SFLOAT ? "R32" : "R16");
+	m->logged = true;
+}
+
 static bool
 capture_orientation(const uint8_t metadata[SF_PT_METADATA_SIZE], struct xrt_quat *orientation)
 {
@@ -514,14 +935,16 @@ sf_comp_passthrough_prepare(struct sf_comp_passthrough *pt,
 	pt->ready = false;
 	if (!pt->wanted || !pt->shm)
 		return;
-	struct sf_pt_type *t = &pt->shm->types[SF_PT_TYPE_COLOR];
+	struct sf_pt_type *t = &pt->shm->types[pt->type];
 	uint32_t generation = __atomic_load_n(&t->generation, __ATOMIC_ACQUIRE);
 	if ((generation & 1) || !t->initialized || t->drm_format != 0x3231564e || t->modifier != 0 ||
 	    t->plane_count != 2 || !t->width || !t->height || t->width > 4096 || t->height > 4096 || t->width % 2 ||
 	    t->height % 2 || !t->frame_count || t->frame_count > SF_PT_MAX_FRAMES)
 		return;
-	if (pt->pid != pt->shm->pid || pt->generation != generation) {
+	if (pt->pid != pt->shm->pid || pt->generation != generation || pt->shown != pt->type) {
+		sf_comp_passthrough_finish(pt);
 		for (int c = 0; c < 2; c++) {
+			release_direct(pt, &pt->cameras[c]);
 			for (int i = 0; i < 3; i++)
 				texture_destroy(pt, &pt->cameras[c].textures[i]);
 			for (int frame = 0; frame < SF_PT_MAX_FRAMES; frame++)
@@ -532,11 +955,14 @@ sf_comp_passthrough_prepare(struct sf_comp_passthrough *pt,
 		}
 		pt->pid = pt->shm->pid;
 		pt->generation = generation;
-		U_LOG_I("Passthrough color stream: %ux%u, XRService %d", t->width, t->height, pt->pid);
+		pt->shown = pt->type;
+		U_LOG_I("Passthrough %s stream: %ux%u, XRService %d", stream_names[pt->shown], t->width, t->height,
+		        pt->pid);
 	}
 	if (!pipeline_create(pt, render, d->views[0].squash.gfx.rtr->rgrp->render_pass))
 		return;
 	uint64_t prepare_start = os_monotonic_get_ns();
+	mesh_update(pt, render->r->cmd);
 	for (int cam = 0; cam < 2; cam++) {
 		struct pt_camera *c = &pt->cameras[cam];
 		struct sf_pt_camera *source = &t->cameras[cam];
@@ -561,7 +987,8 @@ sf_comp_passthrough_prepare(struct sf_comp_passthrough *pt,
 			uint32_t expected = SF_PT_FRAME_LATEST;
 			if (__atomic_compare_exchange_n(&f->state, &expected, SF_PT_FRAME_READING, false,
 			                                __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-				bool gpu = gpu_planes(pt, c, t, f, best, render->r->cmd);
+				bool direct;
+				bool gpu = gpu_planes(pt, c, t, f, best, render->r->cmd, &direct);
 				bool ok = gpu || (copy_plane(pt, t, f, 0, &c->textures[0]) &&
 				                  copy_plane(pt, t, f, 1, &c->textures[1]));
 				if (ok && __atomic_load_n(&t->generation, __ATOMIC_ACQUIRE) == generation) {
@@ -575,10 +1002,21 @@ sf_comp_passthrough_prepare(struct sf_comp_passthrough *pt,
 						               0);
 					}
 				}
-				if (gpu)
+				if (gpu && direct) {
+					// keep sampling this frame until a newer one arrives
+					if (c->direct_frame != f)
+						release_frame(pt, c->direct_frame);
+					c->direct_frame = f;
+					c->direct = true;
 					c->held = f;
-				else
-					__atomic_store_n(&f->state, SF_PT_FRAME_FREE, __ATOMIC_RELEASE);
+				} else {
+					if (c->direct)
+						release_direct(pt, c);
+					if (gpu)
+						c->held = f;
+					else
+						__atomic_store_n(&f->state, SF_PT_FRAME_FREE, __ATOMIC_RELEASE);
+				}
 			}
 		}
 		if (!c->textures[2].uploaded || c->map_seq != __atomic_load_n(&source->map_seq, __ATOMIC_ACQUIRE)) {
@@ -586,11 +1024,15 @@ sf_comp_passthrough_prepare(struct sf_comp_passthrough *pt,
 			c->map_seq = __atomic_load_n(&source->map_seq, __ATOMIC_ACQUIRE);
 			texture_upload(pt, &c->textures[2], render->r->cmd, VK_NULL_HANDLE, 0, 0);
 		}
-		VkDescriptorImageInfo images[3];
-		VkWriteDescriptorSet writes[3];
-		for (uint32_t i = 0; i < 3; i++) {
-			images[i] = (VkDescriptorImageInfo){pt->sampler, c->textures[i].view,
-			                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+		VkDescriptorImageInfo images[4];
+		VkWriteDescriptorSet writes[4];
+		for (uint32_t i = 0; i < 4; i++) {
+			// binding 3 is the room mesh; the luma texture stands in until there is one
+			VkImageView view = i < 2 && c->direct ? c->direct_views[i]
+			                   : i < 3        ? c->textures[i].view
+			                   : pt->mesh.depth.uploaded ? pt->mesh.depth.view
+			                                             : c->textures[0].view;
+			images[i] = (VkDescriptorImageInfo){pt->sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
 			writes[i] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			                                   .dstSet = c->set,
 			                                   .dstBinding = i,
@@ -598,7 +1040,7 @@ sf_comp_passthrough_prepare(struct sf_comp_passthrough *pt,
 			                                   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			                                   .pImageInfo = &images[i]};
 		}
-		pt->vk->vkUpdateDescriptorSets(pt->vk->device, 3, writes, 0, NULL);
+		pt->vk->vkUpdateDescriptorSets(pt->vk->device, 4, writes, 0, NULL);
 		if (c->time && os_monotonic_get_ns() - c->time < 500000000)
 			pt->ready = true;
 	}
@@ -624,6 +1066,18 @@ sf_comp_passthrough_prepare(struct sf_comp_passthrough *pt,
 			U_LOG_I("Passthrough pose delta: %.2f deg, submit age %.1f ms, camera timestamp age %.1f ms, GPU copy %d",
 			        2 * acosf(fminf(1, fabsf(delta.w))) * 180 / M_PI, (now - pt->cameras[0].time) / 1e6,
 			        camera_age_ms, pt->gpu_copy);
+			float m0[62], m1[62];
+			memcpy(m0, pt->cameras[0].metadata, sizeof(m0));
+			memcpy(m1, pt->cameras[1].metadata, sizeof(m1));
+			U_LOG_I("Passthrough %s cameras: mount 0 (%.3f, %.3f, %.3f), mount 1 (%.3f, %.3f, %.3f), focal %.1f/%.1f",
+			        stream_names[pt->shown], m0[27], m0[31], m0[35], m1[27], m1[31], m1[35], m0[4], m1[4]);
+		}
+		if (pt->mesh_enabled) {
+			struct timespec raw;
+			clock_gettime(CLOCK_MONOTONIC_RAW, &raw);
+			U_LOG_I("Passthrough room mesh: %s, seq %lu, age %.0f ms", pt->mesh.valid ? "in use" : "not available",
+			        (unsigned long)pt->mesh.seq,
+			        pt->mesh.time ? (raw.tv_sec + raw.tv_nsec * 1e-9 - pt->mesh.time) * 1e3 : -1.0);
 		}
 		pt->prepare_ns = pt->prepare_count = 0;
 		pt->log_ns = now;
@@ -699,13 +1153,21 @@ sf_comp_passthrough_draw(struct sf_comp_passthrough *pt,
 {
 	if (!pt || !pt->ready || view >= 2)
 		return;
-	// Keep the eye assignment verified on the headset: camera 1 left, camera 0 right.
-	struct pt_camera *c = &pt->cameras[1 - view];
+	// Color: camera 1 left, camera 0 right, verified on the headset. IR: the camera mounted further left
+	// (smaller x of the mounting offset) feeds the left eye.
+	int left = 1;
+	if (pt->shown == SF_PT_TYPE_TRACKING) {
+		float x0, x1;
+		memcpy(&x0, pt->cameras[0].metadata + 27 * sizeof(float), sizeof(x0));
+		memcpy(&x1, pt->cameras[1].metadata + 27 * sizeof(float), sizeof(x1));
+		left = x1 < x0 ? 1 : 0;
+	}
+	struct pt_camera *c = &pt->cameras[view == 0 ? left : 1 - left];
 	if (!c->time || os_monotonic_get_ns() - c->time >= 500000000)
 		return;
 	float meta[62];
 	memcpy(meta, c->metadata, sizeof(meta));
-	float push[32] = {0};
+	float push[52] = {0};
 	memcpy(push, meta + 4, 8 * sizeof(float));
 	struct xrt_quat sample_q = eye_pose->orientation, capture_q;
 	const char *reproject = getenv("SF_PASSTHROUGH_REPROJECT");
@@ -748,7 +1210,26 @@ sf_comp_passthrough_draw(struct sf_comp_passthrough *pt,
 	}
 	push[26] = c->textures[0].width;
 	push[27] = c->textures[0].height;
-	for (int i = 0; i < 32; i++)
+	// Room mesh: camera to mesh frame (mesh_from_world * world_from_camera at capture) and its pinhole grid
+	struct pt_mesh *m = &pt->mesh;
+	if (m->valid && compensate && depth > 0) {
+		const float *mw = m->mesh_from_world, *wc = meta + 12;
+		for (int r = 0; r < 3; r++) {
+			for (int col = 0; col < 3; col++)
+				push[32 + r * 4 + col] =
+				    mw[r * 4] * wc[col] + mw[r * 4 + 1] * wc[4 + col] + mw[r * 4 + 2] * wc[8 + col];
+			push[44 + r] = mw[r * 4] * wc[3] + mw[r * 4 + 1] * wc[7] + mw[r * 4 + 2] * wc[11] + mw[r * 4 + 3];
+		}
+		push[35] = m->focal;
+		push[39] = m->cx;
+		push[43] = m->cy;
+		push[47] = 1;
+		push[48] = m->width;
+		push[49] = m->height;
+		push[50] = 6;
+		push[51] = pt->mesh_debug;
+	}
+	for (int i = 0; i < 52; i++)
 		if (!isfinite(push[i]))
 			return;
 	if (push[0] <= 0 || push[1] <= 0)
@@ -757,8 +1238,10 @@ sf_comp_passthrough_draw(struct sf_comp_passthrough *pt,
 	vk->vkCmdBindPipeline(render->r->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pt->pipeline);
 	vk->vkCmdBindDescriptorSets(render->r->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pt->layout, 0, 1, &c->set, 0,
 	                            NULL);
-	vk->vkCmdPushConstants(render->r->cmd, pt->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), push);
-	vk->vkCmdDraw(render->r->cmd, 3, 1, 0, 0);
+	vk->vkCmdPushConstants(render->r->cmd, pt->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+	                       sizeof(push), push);
+	// a 64 x 64 grid of two triangles per cell, generated in frame_passthrough.vert
+	vk->vkCmdDraw(render->r->cmd, 64 * 64 * 6, 1, 0, 0);
 }
 
 void
@@ -768,6 +1251,8 @@ sf_comp_passthrough_destroy(struct sf_comp_passthrough **ptr)
 	if (!pt)
 		return;
 	sf_comp_passthrough_finish(pt);
+	for (int c = 0; c < 2; c++)
+		release_direct(pt, &pt->cameras[c]);
 	sf_comp_passthrough_request(pt, false);
 	struct vk_bundle *vk = pt->vk;
 	for (int c = 0; c < 2; c++) {
@@ -789,6 +1274,9 @@ sf_comp_passthrough_destroy(struct sf_comp_passthrough **ptr)
 		vk->vkDestroySampler(vk->device, pt->sampler, NULL);
 	if (pt->shm)
 		munmap(pt->shm, sizeof(*pt->shm));
+	texture_destroy(pt, &pt->mesh.depth);
+	queue_close(&pt->mesh.data);
+	queue_close(&pt->mesh.layout);
 	if (pt->pose_trace) fclose(pt->pose_trace);
 	free(pt);
 	*ptr = NULL;

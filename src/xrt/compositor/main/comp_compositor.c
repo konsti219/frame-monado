@@ -589,6 +589,8 @@ static const char *optional_device_extensions[] = {
     VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME, //
     VK_EXT_GLOBAL_PRIORITY_EXTENSION_NAME,   //
     VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME, //
+    VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME,        //
+    VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME, // passthrough samples camera dma-bufs in place
 
 // Platform version of "external_fence" and "external_semaphore"
 #if defined(XRT_GRAPHICS_SYNC_HANDLE_IS_FD)

@@ -5,6 +5,8 @@
 #include "passthrough.hpp"
 #include "settings.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
@@ -79,7 +81,79 @@ logging_stub(const char *name)
 	return stub;
 }
 
-BlockQueue blockqueue;
+// IVRSystem_023 as logging stubs, except PollNextEvent (slot 29): under SteamVR the compositor tells XRService that
+// room view is shown, which is what starts the RoomView3D mesh; we send that once
+constexpr int kPollNextEventSlot = 29;
+constexpr uint32_t kVREventRoomViewShown = 526;
+
+bool
+poll_next_event(void *self, void *event, uint32_t size)
+{
+	// at the first poll and again 5 and 15 s later, in case XRService ignores it before its cameras are set up
+	static std::atomic<int> sent{0};
+	static const auto start = std::chrono::steady_clock::now();
+	const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+	const int due = t >= 15 ? 3 : t >= 5 ? 2 : 1;
+	int n = sent.load();
+	if (getenv("SF_ROOMVIEW_EVENT_OFF") != nullptr || n >= due || !sent.compare_exchange_strong(n, n + 1) ||
+	    event == nullptr || size < 12) {
+		return false;
+	}
+	std::memset(event, 0, size);
+	uint32_t *fields = static_cast<uint32_t *>(event); // eventType, trackedDeviceIndex, eventAgeSeconds, data
+	fields[0] = kVREventRoomViewShown;
+	LOG("[vrclient] PollNextEvent -> VREvent_RoomViewShown (size %u)\n", size);
+	return true;
+}
+
+void *
+system_interface(const char *version)
+{
+	static LoggingStub *stub = [version] {
+		auto *base = static_cast<LoggingStub *>(logging_stub(version));
+		void **vtable = new void *[128];
+		std::memcpy(vtable, base->vtable, sizeof(void *) * 128);
+		vtable[kPollNextEventSlot] = reinterpret_cast<void *>(&poll_next_event);
+		return new LoggingStub{vtable, base->name};
+	}();
+	return stub;
+}
+
+// Raw call logger for the passthrough interfaces while their semantics are worked out
+#define TRACE(name, fmt, ...)                                                                                          \
+	do {                                                                                                           \
+		static int n = 0;                                                                                      \
+		if (n++ < 20) {                                                                                        \
+			LOG("[vrclient] " name " " fmt "\n", ##__VA_ARGS__);                                          \
+		}                                                                                                      \
+	} while (0)
+
+// XRService's queue lifecycle calls, logged (which queues it creates or connects to, and when)
+class LoggingBlockQueue : public BlockQueue
+{
+public:
+	vr::EBlockQueueError
+	Create(vr::PropertyContainerHandle_t *handle, char *path, uint32_t data, uint32_t header, uint32_t count,
+	       uint32_t flags) override
+	{
+		vr::EBlockQueueError err = BlockQueue::Create(handle, path, data, header, count, flags);
+		LOG("[vrclient] queue Create %s (%u + %u x %u) -> %d\n", path, header, data, count, err);
+		return err;
+	}
+	vr::EBlockQueueError
+	Connect(vr::PropertyContainerHandle_t *handle, char *path) override
+	{
+		vr::EBlockQueueError err = BlockQueue::Connect(handle, path);
+		static std::mutex mut;
+		static std::unordered_map<std::string, int> failures;
+		std::lock_guard lk(mut);
+		if (err == vr::EBlockQueueError_BlockQueueError_None || failures[path]++ % 100 == 0)
+			LOG("[vrclient] queue Connect %s -> %d (%d failures)\n", path, err, failures[path]);
+		return err;
+	}
+};
+
+LoggingBlockQueue blockqueue;
 
 // XRService reads block header properties (e.g. the controller config lengths) through paths
 class BlockProperties : public vr::IVRProperties
@@ -89,7 +163,22 @@ public:
 	ReadPropertyBatch(vr::PropertyContainerHandle_t handle, vr::PropertyRead_t *batch, uint32_t count) override
 	{
 		if (!BlockQueue::is_block_handle(handle)) {
-			LOG("[vrclient] property read on non-block container %#lx\n", (unsigned long)handle);
+			if (blockqueue.read_queue_properties(handle, batch, count) == vr::TrackedProp_Success) {
+				for (uint32_t i = 0; i < count; i++) {
+					if (batch[i].eError == vr::TrackedProp_UnknownProperty) {
+						TRACE("queue property", "%#lx: unknown prop %#x", (unsigned long)handle,
+						      (unsigned)batch[i].prop);
+					}
+				}
+				return vr::TrackedProp_Success;
+			}
+			for (uint32_t i = 0; i < count; i++) {
+				if (first_few("read/" + std::to_string(batch[i].prop))) {
+					LOG("[vrclient] property read on non-block container %#lx: prop %u tag %u size %u\n",
+					    (unsigned long)handle, batch[i].prop, batch[i].unTag,
+					    batch[i].unBufferSize);
+				}
+			}
 			return vr::TrackedProp_InvalidContainer;
 		}
 		return blockqueue.read_block_properties(handle, batch, count);
@@ -98,7 +187,13 @@ public:
 	WritePropertyBatch(vr::PropertyContainerHandle_t handle, vr::PropertyWrite_t *batch, uint32_t count) override
 	{
 		if (!BlockQueue::is_block_handle(handle)) {
-			LOG("[vrclient] property write on non-block container %#lx\n", (unsigned long)handle);
+			for (uint32_t i = 0; i < count; i++) {
+				if (first_few("write/" + std::to_string(batch[i].prop))) {
+					LOG("[vrclient] property write on non-block container %#lx: prop %u type %d tag %u size %u\n",
+					    (unsigned long)handle, batch[i].prop, batch[i].writeType,
+					    batch[i].unTag, batch[i].unBufferSize);
+				}
+			}
 			return vr::TrackedProp_InvalidContainer;
 		}
 		return blockqueue.write_block_properties(handle, batch, count);
@@ -117,15 +212,6 @@ public:
 
 BlockProperties block_properties;
 Paths paths(&block_properties);
-
-// Raw call logger for the passthrough interfaces while their semantics are worked out
-#define TRACE(name, fmt, ...)                                                                                          \
-	do {                                                                                                           \
-		static int n = 0;                                                                                      \
-		if (n++ < 20) {                                                                                        \
-			LOG("[vrclient] " name " " fmt "\n", ##__VA_ARGS__);                                          \
-		}                                                                                                      \
-	} while (0)
 
 struct DmabufPlane
 {
@@ -265,6 +351,9 @@ public:
 			if (void *pt = camera_passthrough_interface()) {
 				return pt;
 			}
+		}
+		if (std::strcmp(version, "IVRSystem_023") == 0) {
+			return system_interface(version);
 		}
 		LOG("[vrclient] stub for %s\n", version);
 		return logging_stub(version);
