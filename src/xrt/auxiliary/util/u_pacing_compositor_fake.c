@@ -140,7 +140,7 @@ struct fake_timing
 	int64_t frame_peak_ns, min_comp_time_ns;
 	int64_t skipped, late, skip_log_ns;
 	//! Worst parts of a frame within the log period: wake to submit (CPU), submit to GPU start, GPU
-	int64_t worst_cpu_ns, worst_queue_ns, worst_gpu_ns;
+	int64_t worst_cpu_ns, worst_queue_ns, worst_gpu_ns, worst_wake_ns;
 
 	//! This won't run out, trust me.
 	int64_t frame_id_generator;
@@ -323,14 +323,14 @@ pc_predict(struct u_pacing_compositor *upc,
 		desired_present_time_ns += ft->frame_period_ns;
 		ft->skipped++;
 	}
-	if (now_ns - ft->skip_log_ns > U_TIME_1S_IN_NS * 10) {
+	if (now_ns - ft->skip_log_ns > (int64_t)U_TIME_1S_IN_NS * 10) {
 		if (ft->skip_log_ns && (ft->drain_late_frames || ft->adaptive_budget))
 			U_LOG_I("Pacer: %" PRId64 " late frames, %" PRId64 " skipped slots in 10 s, budget %.2f ms (peak frame "
-			        "%.2f ms; worst CPU %.2f, wait for GPU %.2f, GPU %.2f ms)",
-			        ft->late, ft->skipped, ft->comp_time_ns / 1e6, ft->frame_peak_ns / 1e6, ft->worst_cpu_ns / 1e6,
-			        ft->worst_queue_ns / 1e6, ft->worst_gpu_ns / 1e6);
+			        "%.2f ms; worst wake delay %.2f, CPU %.2f, wait for GPU %.2f, GPU %.2f ms)",
+			        ft->late, ft->skipped, ft->comp_time_ns / 1e6, ft->frame_peak_ns / 1e6, ft->worst_wake_ns / 1e6,
+			        ft->worst_cpu_ns / 1e6, ft->worst_queue_ns / 1e6, ft->worst_gpu_ns / 1e6);
 		ft->skipped = ft->late = 0;
-		ft->worst_cpu_ns = ft->worst_queue_ns = ft->worst_gpu_ns = 0;
+		ft->worst_cpu_ns = ft->worst_queue_ns = ft->worst_gpu_ns = ft->worst_wake_ns = 0;
 		ft->skip_log_ns = now_ns;
 	}
 	int64_t predicted_display_time_ns = calc_display_time(ft, desired_present_time_ns);
@@ -427,6 +427,8 @@ pc_info_gpu(
 			ft->worst_cpu_ns = cpu > ft->worst_cpu_ns ? cpu : ft->worst_cpu_ns;
 			ft->worst_queue_ns = queue > ft->worst_queue_ns ? queue : ft->worst_queue_ns;
 			ft->worst_gpu_ns = gpu > ft->worst_gpu_ns ? gpu : ft->worst_gpu_ns;
+			int64_t wake = f->when_woke_ns - f->predicted_wake_up_time_ns;
+			ft->worst_wake_ns = wake > ft->worst_wake_ns ? wake : ft->worst_wake_ns;
 		}
 		if (f->predicted_present_time_ns && f->when_woke_ns) {
 			// The commit follows the GPU by about half a millisecond and has to land before the vblank
@@ -437,8 +439,9 @@ pc_info_gpu(
 		}
 		if (ft->adaptive_budget && f->when_woke_ns) {
 			// Adaptive budget: wake early enough for the slowest recent frame (a peak decaying over ~10 s)
-			// Frames longer than a period (startup, shader compiles) would hold the budget at its limit for minutes
-			int64_t frame_ns = gpu_end_ns - f->when_woke_ns;
+			// From the planned wake-up, so waking late counts too; frames longer than a period (startup, shader
+			// compiles) would hold the budget at its limit for minutes
+			int64_t frame_ns = gpu_end_ns - (f->predicted_wake_up_time_ns ? f->predicted_wake_up_time_ns : f->when_woke_ns);
 			if (frame_ns > ft->frame_period_ns)
 				frame_ns = ft->frame_peak_ns;
 			ft->frame_peak_ns = frame_ns > ft->frame_peak_ns ? frame_ns : ft->frame_peak_ns - ft->frame_peak_ns / 1000;

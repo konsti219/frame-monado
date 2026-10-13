@@ -16,8 +16,12 @@
 #include "math/m_mathinclude.h"
 
 #include "util/u_trace_marker.h"
+#include "util/u_debug.h"
 
 #include "vk/vk_helpers.h"
+#include "vk/vk_image_allocator.h"
+#include "vk/vk_compositor_flags.h"
+#include "vk/vk_format.h"
 
 #include "render/render_interface.h"
 
@@ -104,7 +108,19 @@ struct gfx_mesh_view_data
 struct gfx_mesh_data
 {
 	struct gfx_mesh_view_data views[XRT_MAX_VIEWS];
+
+	//! Quad layers on top of everything else, drawn directly in the distortion pass.
+	const struct comp_layer *quads;
+	uint32_t quad_count;
+
+	//! Mip chain copies of the quads' images (alpha and no-alpha views), VK_NULL_HANDLE to sample the swapchain.
+	VkImageView quad_views[RENDER_MAX_LAYERS][2];
 };
+
+// Draw quad layers in the distortion pass, above everything else, instead of squashing them (SteamVR does both).
+DEBUG_GET_ONCE_BOOL_OPTION(quad_direct, "SF_QUAD_DIRECT", true)
+// Mip levels of the per-frame copy of quad images (SteamVR: 3, box filtered), 1 samples the swapchain directly.
+DEBUG_GET_ONCE_NUM_OPTION(quad_mips, "SF_QUAD_MIPS", 3)
 
 
 /*
@@ -226,6 +242,221 @@ get_layer_image(const struct comp_layer *layer, uint32_t swapchain_index, uint32
 
 	const struct comp_swapchain *sc = (struct comp_swapchain *)(comp_layer_get_swapchain(layer, swapchain_index));
 	return &sc->images[image_index];
+}
+
+/*
+ *
+ * Mip chain copies of quad layer images.
+ *
+ */
+
+#define QUAD_MIP_CACHE_SIZE 16
+
+struct quad_mip
+{
+	VkImage src;
+	uint32_t src_layer;
+	VkExtent2D extent;
+	VkFormat format;
+	uint32_t levels;
+
+	VkImage image;
+	VkDeviceMemory memory;
+	VkImageView views[2]; // alpha, no-alpha
+
+	uint64_t used_frame;
+	uint64_t copied_frame;
+};
+
+static struct quad_mip quad_mips[QUAD_MIP_CACHE_SIZE];
+static uint64_t quad_mip_frame;
+
+static void
+quad_mip_destroy(struct vk_bundle *vk, struct quad_mip *m)
+{
+	for (int i = 0; i < 2; i++) {
+		if (m->views[i] != VK_NULL_HANDLE) {
+			vk->vkDestroyImageView(vk->device, m->views[i], NULL);
+		}
+	}
+	if (m->image != VK_NULL_HANDLE) {
+		vk->vkDestroyImage(vk->device, m->image, NULL);
+	}
+	if (m->memory != VK_NULL_HANDLE) {
+		vk->vkFreeMemory(vk->device, m->memory, NULL);
+	}
+	*m = (struct quad_mip){0};
+}
+
+static struct quad_mip *
+quad_mip_get(struct vk_bundle *vk, VkImage src, uint32_t src_layer, VkExtent2D extent, VkFormat format, uint32_t levels)
+{
+	struct quad_mip *slot = NULL;
+	for (uint32_t i = 0; i < QUAD_MIP_CACHE_SIZE; i++) {
+		struct quad_mip *m = &quad_mips[i];
+		if (m->image != VK_NULL_HANDLE && m->src == src && m->src_layer == src_layer &&
+		    m->extent.width == extent.width && m->extent.height == extent.height && m->format == format &&
+		    m->levels == levels) {
+			m->used_frame = quad_mip_frame;
+			return m;
+		}
+		if (m->used_frame != quad_mip_frame && (slot == NULL || m->used_frame < slot->used_frame)) {
+			slot = m;
+		}
+	}
+	if (slot == NULL) {
+		return NULL;
+	}
+
+	// Least recently used slot; the queue is in order, so the last frame's reads come before our writes.
+	quad_mip_destroy(vk, slot);
+
+	VkImageCreateInfo info = {
+	    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+	    .imageType = VK_IMAGE_TYPE_2D,
+	    .format = format,
+	    .extent = {extent.width, extent.height, 1},
+	    .mipLevels = levels,
+	    .arrayLayers = 1,
+	    .samples = VK_SAMPLE_COUNT_1_BIT,
+	    .tiling = VK_IMAGE_TILING_OPTIMAL,
+	    .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+	    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+	VkResult ret = vk->vkCreateImage(vk->device, &info, NULL, &slot->image);
+	if (ret != VK_SUCCESS) {
+		VK_ERROR(vk, "vkCreateImage: %s", vk_result_string(ret));
+		*slot = (struct quad_mip){0};
+		return NULL;
+	}
+
+	VkMemoryRequirements requirements;
+	vk->vkGetImageMemoryRequirements(vk->device, slot->image, &requirements);
+	ret = vk_alloc_and_bind_image_memory(vk, slot->image, &requirements, NULL, __func__, &slot->memory);
+	if (ret != VK_SUCCESS) {
+		quad_mip_destroy(vk, slot);
+		return NULL;
+	}
+
+	VkImageSubresourceRange range = {
+	    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+	    .baseMipLevel = 0,
+	    .levelCount = levels,
+	    .baseArrayLayer = 0,
+	    .layerCount = 1,
+	};
+	VkComponentMapping no_alpha = {
+	    .r = VK_COMPONENT_SWIZZLE_R,
+	    .g = VK_COMPONENT_SWIZZLE_G,
+	    .b = VK_COMPONENT_SWIZZLE_B,
+	    .a = VK_COMPONENT_SWIZZLE_ONE,
+	};
+	ret = vk_create_view(vk, slot->image, VK_IMAGE_VIEW_TYPE_2D, format, range, &slot->views[0]);
+	if (ret == VK_SUCCESS) {
+		ret = vk_create_view_swizzle(vk, slot->image, VK_IMAGE_VIEW_TYPE_2D, format, range, no_alpha,
+		                             &slot->views[1]);
+	}
+	if (ret != VK_SUCCESS) {
+		quad_mip_destroy(vk, slot);
+		return NULL;
+	}
+
+	slot->src = src;
+	slot->src_layer = src_layer;
+	slot->extent = extent;
+	slot->format = format;
+	slot->levels = levels;
+	slot->used_frame = quad_mip_frame;
+	slot->copied_frame = 0;
+	return slot;
+}
+
+static void
+quad_mip_barrier(struct vk_bundle *vk,
+                 VkCommandBuffer cmd,
+                 VkImage image,
+                 uint32_t level,
+                 uint32_t level_count,
+                 uint32_t layer,
+                 VkAccessFlags src_access,
+                 VkAccessFlags dst_access,
+                 VkImageLayout old_layout,
+                 VkImageLayout new_layout,
+                 VkPipelineStageFlags src_stage,
+                 VkPipelineStageFlags dst_stage)
+{
+	VkImageSubresourceRange range = {
+	    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+	    .baseMipLevel = level,
+	    .levelCount = level_count,
+	    .baseArrayLayer = layer,
+	    .layerCount = 1,
+	};
+	vk_cmd_image_barrier_locked(vk, cmd, image, src_access, dst_access, old_layout, new_layout, src_stage,
+	                            dst_stage, range);
+}
+
+/// Copies the quad's image into a box filtered mip chain, like SteamVR does every frame.
+static void
+quad_mip_record(struct vk_bundle *vk, VkCommandBuffer cmd, struct quad_mip *m)
+{
+	const VkPipelineStageFlags read_stages =
+	    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+	if (m->copied_frame == quad_mip_frame) {
+		return;
+	}
+	m->copied_frame = quad_mip_frame;
+
+	quad_mip_barrier(vk, cmd, m->src, 0, 1, m->src_layer, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+	                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, read_stages,
+	                 VK_PIPELINE_STAGE_TRANSFER_BIT);
+	quad_mip_barrier(vk, cmd, m->image, 0, m->levels, 0, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+	                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, read_stages,
+	                 VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+	VkImageCopy copy = {
+	    .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, m->src_layer, 1},
+	    .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+	    .extent = {m->extent.width, m->extent.height, 1},
+	};
+	vk->vkCmdCopyImage(cmd, m->src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m->image,
+	                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+	for (uint32_t level = 1; level < m->levels; level++) {
+		quad_mip_barrier(vk, cmd, m->image, level - 1, 1, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+		                 VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		                 VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+		int32_t sw = (int32_t)MAX(m->extent.width >> (level - 1), 1u);
+		int32_t sh = (int32_t)MAX(m->extent.height >> (level - 1), 1u);
+		int32_t dw = (int32_t)MAX(m->extent.width >> level, 1u);
+		int32_t dh = (int32_t)MAX(m->extent.height >> level, 1u);
+		VkImageBlit blit = {
+		    .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1},
+		    .srcOffsets = {{0, 0, 0}, {sw, sh, 1}},
+		    .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1},
+		    .dstOffsets = {{0, 0, 0}, {dw, dh, 1}},
+		};
+		vk->vkCmdBlitImage(cmd, m->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m->image,
+		                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+	}
+
+	if (m->levels > 1) {
+		quad_mip_barrier(vk, cmd, m->image, 0, m->levels - 1, 0, VK_ACCESS_TRANSFER_READ_BIT,
+		                 VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+	}
+	quad_mip_barrier(vk, cmd, m->image, m->levels - 1, 1, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+	                 VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT,
+	                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+	quad_mip_barrier(vk, cmd, m->src, 0, 1, m->src_layer, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT,
+	                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 }
 
 static inline void
@@ -511,6 +742,178 @@ crg_clear_output(struct render_gfx *render, const struct comp_render_dispatch_da
  *
  */
 
+/// Quad layer drawn in the distortion pass: maps the scratch NDC the mesh samples back onto the quad plane.
+/// Panel scissor around a quad: its outline through the inverse distortion table, with a margin for timewarp.
+static void
+quad_direct_scissor(const struct render_resources *r,
+                    const struct xrt_matrix_4x4 *mvp,
+                    const struct comp_render_dispatch_data *d,
+                    uint32_t view,
+                    render_scissor_data_t *out)
+{
+	const render_scissor_data_t *full = &d->views[view].target.scissor_data;
+	*out = *full;
+	if (!r->mesh.has_inverse) {
+		return;
+	}
+
+	const struct render_viewport_data *vp = &d->views[view].target.viewport_data;
+	const struct xrt_matrix_2x2 *rot = &d->views[view].target.gfx.vertex_rot;
+	const int n = RENDER_MESH_INVERSE_SIZE;
+	const int steps = 16;
+	float min_x = INFINITY, min_y = INFINITY, max_x = -INFINITY, max_y = -INFINITY;
+	int behind = 0;
+
+	for (int e = 0; e < 4; e++) {
+		for (int i = 0; i <= steps; i++) {
+			float t = (float)i / (float)steps - 0.5f;
+			float qx = e == 0 ? t : e == 1 ? 0.5f : e == 2 ? -t : -0.5f;
+			float qy = e == 0 ? -0.5f : e == 1 ? t : e == 2 ? 0.5f : -t;
+			float cx = mvp->v[0] * qx + mvp->v[4] * qy + mvp->v[12];
+			float cy = mvp->v[1] * qx + mvp->v[5] * qy + mvp->v[13];
+			float cw = mvp->v[3] * qx + mvp->v[7] * qy + mvp->v[15];
+			if (cw <= 1e-4f) {
+				behind++;
+				continue;
+			}
+
+			// Scratch uv to table cell (bilinear), clamped to the mesh.
+			float gx = CLAMP((cx / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+			float gy = CLAMP((cy / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+			int x0 = MIN((int)gx, n - 2), y0 = MIN((int)gy, n - 2);
+			float fx = gx - (float)x0, fy = gy - (float)y0;
+			const struct xrt_vec2 *a = &r->mesh.inverse[view][y0][x0];
+			const struct xrt_vec2 *b = &r->mesh.inverse[view][y0][x0 + 1];
+			const struct xrt_vec2 *c = &r->mesh.inverse[view][y0 + 1][x0];
+			const struct xrt_vec2 *dd = &r->mesh.inverse[view][y0 + 1][x0 + 1];
+			float px = (a->x * (1 - fx) + b->x * fx) * (1 - fy) + (c->x * (1 - fx) + dd->x * fx) * fy;
+			float py = (a->y * (1 - fx) + b->y * fx) * (1 - fy) + (c->y * (1 - fx) + dd->y * fx) * fy;
+
+			// Mesh position to target pixels, like mesh.vert.
+			float ox = rot->v[0] * px + rot->v[2] * py;
+			float oy = rot->v[1] * px + rot->v[3] * py;
+			float sx = (float)vp->x + (ox * 0.5f + 0.5f) * (float)vp->w;
+			float sy = (float)vp->y + (oy * 0.5f + 0.5f) * (float)vp->h;
+			min_x = MIN(min_x, sx);
+			min_y = MIN(min_y, sy);
+			max_x = MAX(max_x, sx);
+			max_y = MAX(max_y, sy);
+		}
+	}
+
+	if (behind == 4 * (steps + 1)) {
+		out->w = 0; // All behind the eye.
+		out->h = 0;
+		return;
+	}
+	if (behind > 0) {
+		return; // Crosses the eye plane, keep the whole view.
+	}
+
+	// Timewarp turns the view by up to the rotation between scanout begin and end; pixels per radian at the centre
+	// of the lens are about twice the average over the field of view.
+	const struct xrt_quat *qa = &d->views[view].world_pose_scanout_begin.orientation;
+	const struct xrt_quat *qb = &d->views[view].world_pose_scanout_end.orientation;
+	float dot = fabsf(qa->x * qb->x + qa->y * qb->y + qa->z * qb->z + qa->w * qb->w);
+	float angle = 2.0f * acosf(MIN(dot, 1.0f));
+	const struct xrt_fov *fov = &d->views[view].fov;
+	float px_per_rad = 2.0f * (float)vp->w / (fov->angle_right - fov->angle_left);
+	float margin = 0.04f * (float)MAX(vp->w, vp->h) + angle * px_per_rad;
+	int32_t fx0 = (int32_t)full->x, fy0 = (int32_t)full->y;
+	int32_t x0 = MAX((int32_t)(min_x - margin), fx0);
+	int32_t y0 = MAX((int32_t)(min_y - margin), fy0);
+	int32_t x1 = MIN((int32_t)(max_x + margin), fx0 + (int32_t)full->w);
+	int32_t y1 = MIN((int32_t)(max_y + margin), fy0 + (int32_t)full->h);
+	if (x1 <= x0 || y1 <= y0) {
+		out->w = 0;
+		out->h = 0;
+		return;
+	}
+	out->x = (uint32_t)x0;
+	out->y = (uint32_t)y0;
+	out->w = (uint32_t)(x1 - x0);
+	out->h = (uint32_t)(y1 - y0);
+}
+
+static VkResult
+quad_direct_alloc_and_write(struct render_gfx *render,
+                            const struct comp_layer *layer,
+                            const VkImageView mip_views[2],
+                            const struct render_gfx_mesh_ubo_data *mesh_data,
+                            const struct comp_render_dispatch_data *d,
+                            uint32_t view,
+                            render_scissor_data_t *out_scissor,
+                            VkDescriptorSet *out_descriptor_set)
+{
+	const struct xrt_layer_data *layer_data = &layer->data;
+	const struct xrt_layer_quad_data *q = &layer_data->quad;
+	const struct comp_swapchain_image *image = get_layer_image(layer, 0, q->sub.image_index);
+
+	*out_descriptor_set = VK_NULL_HANDLE;
+	if (!(q->size.x > 0.0f) || !(q->size.y > 0.0f)) {
+		return VK_SUCCESS;
+	}
+
+	// Same view projection as the squash of this view.
+	struct xrt_matrix_4x4 p, v, vp, model, mvp;
+	math_matrix_4x4_projection_vulkan_infinite_reverse(&d->views[view].fov, 0.1, &p);
+	if (is_layer_view_space(layer_data)) {
+		math_matrix_4x4_view_from_pose(&d->views[view].eye_pose, &v);
+	} else {
+		math_matrix_4x4_view_from_pose(&d->views[view].world_pose_scanout_begin, &v);
+	}
+	math_matrix_4x4_multiply(&p, &v, &vp);
+	struct xrt_vec3 scale = {q->size.x, q->size.y, 1};
+	math_matrix_4x4_model(&q->pose, &scale, &model);
+	math_matrix_4x4_multiply(&vp, &model, &mvp);
+
+	quad_direct_scissor(render->r, &mvp, d, view, out_scissor);
+	if (out_scissor->w == 0) {
+		return VK_SUCCESS;
+	}
+
+	// Quad plane (x, y, 1) to clip (x, y, w), column-major: element (row, col) is v[col * 4 + row].
+	static const int rc[3] = {0, 1, 3};
+	double h[3][3];
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++) {
+			h[r][c] = mvp.v[rc[c] * 4 + rc[r]];
+		}
+	}
+	double det = h[0][0] * (h[1][1] * h[2][2] - h[1][2] * h[2][1]) -
+	             h[0][1] * (h[1][0] * h[2][2] - h[1][2] * h[2][0]) +
+	             h[0][2] * (h[1][0] * h[2][1] - h[1][1] * h[2][0]);
+	if (fabs(det) < 1e-12) {
+		*out_descriptor_set = VK_NULL_HANDLE;
+		return VK_SUCCESS;
+	}
+
+	struct render_gfx_mesh_quad_ubo_data data = {.mesh = *mesh_data};
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++) {
+			// Inverse via cofactors: inv[r][c] = cof[c][r] / det.
+			int r1 = (c + 1) % 3, r2 = (c + 2) % 3, c1 = (r + 1) % 3, c2 = (r + 2) % 3;
+			data.ndc_to_quad[r][c] = (float)((h[r1][c1] * h[r2][c2] - h[r1][c2] * h[r2][c1]) / det);
+		}
+	}
+
+	set_post_transform_rect(layer_data, &q->sub.norm_rect, false, &data.quad_post_transform);
+	apply_bias_and_scale_from_layer(layer_data, &data.color_scale, &data.color_bias);
+
+	VkImageView src_view = get_image_view(image, layer_data->flags, q->sub.array_index);
+	if (mip_views[0] != VK_NULL_HANDLE) {
+		bool alpha = (layer_data->flags & XRT_LAYER_COMPOSITION_BLEND_TEXTURE_SOURCE_ALPHA_BIT) != 0;
+		src_view = mip_views[alpha ? 0 : 1];
+	}
+
+	return render_gfx_mesh_quad_alloc_and_write( //
+	    render,                                  //
+	    &data,                                   //
+	    render->r->samplers.clamp_to_edge_aniso, //
+	    src_view,                                //
+	    out_descriptor_set);                     //
+}
+
 /// Used in both fast-path and layer-squashed routes
 static void
 crg_distortion_common(struct render_gfx *render,
@@ -528,6 +931,8 @@ crg_distortion_common(struct render_gfx *render,
 	 */
 
 	struct gfx_mesh_state ms = XRT_STRUCT_INIT;
+	VkDescriptorSet quad_sets[XRT_MAX_VIEWS][RENDER_MAX_LAYERS] = {0};
+	render_scissor_data_t quad_scissors[XRT_MAX_VIEWS][RENDER_MAX_LAYERS];
 
 	for (uint32_t i = 0; i < d->target.view_count; i++) {
 
@@ -562,6 +967,16 @@ crg_distortion_common(struct render_gfx *render,
 		VK_CHK_WITH_GOTO(ret, "render_gfx_mesh_alloc_and_write", err_no_memory);
 
 		VK_NAME_DESCRIPTOR_SET(vk, ms.descriptor_sets[i], "render_gfx mesh descriptor sets");
+
+		for (uint32_t q = 0; q < md->quad_count; q++) {
+			const struct comp_layer *layer = &md->quads[q];
+			if (!is_layer_view_visible(&layer->data, i)) {
+				continue;
+			}
+			ret = quad_direct_alloc_and_write(render, layer, md->quad_views[q], &data, d, i,
+			                                  &quad_scissors[i][q], &quad_sets[i][q]);
+			VK_CHK_WITH_GOTO(ret, "quad_direct_alloc_and_write", err_no_memory);
+		}
 	}
 
 
@@ -592,6 +1007,19 @@ crg_distortion_common(struct render_gfx *render,
 		    ms.descriptor_sets[i], //
 		    do_timewarp);          //
 
+		for (uint32_t q = 0; q < md->quad_count; q++) {
+			if (quad_sets[i][q] == VK_NULL_HANDLE || quad_scissors[i][q].w == 0) {
+				continue;
+			}
+			render_gfx_begin_view(render, i, viewport_data, &quad_scissors[i][q]);
+			render_gfx_mesh_quad_draw(                             //
+			    render,                                            //
+			    i,                                                 // mesh_index
+			    quad_sets[i][q],                                   //
+			    do_timewarp,                                       //
+			    !is_layer_unpremultiplied(&md->quads[q].data));    //
+		}
+
 		render_gfx_end_view(render);
 	}
 
@@ -606,7 +1034,10 @@ err_no_memory:
 
 /// For use after squashing layers
 static void
-crg_distortion_after_squash(struct render_gfx *render, const struct comp_render_dispatch_data *d)
+crg_distortion_after_squash(struct render_gfx *render,
+                            const struct comp_render_dispatch_data *d,
+                            const struct comp_layer *quads,
+                            uint32_t quad_count)
 {
 
 	// Shared between all views.
@@ -627,6 +1058,37 @@ crg_distortion_after_squash(struct render_gfx *render, const struct comp_render_
 		    &src_norm_rect,        //
 		    clamp_to_border_black, // src_sampler
 		    src_image_view);       //
+	}
+	md.quads = quads;
+	md.quad_count = quad_count;
+
+	// Per-frame mip chain copies of the quads' images, recorded before the distortion render pass.
+	uint32_t levels = (uint32_t)MAX(debug_get_num_option_quad_mips(), 1);
+	quad_mip_frame++;
+	for (uint32_t q = 0; q < quad_count && levels > 1; q++) {
+		const struct xrt_layer_quad_data *qd = &quads[q].data.quad;
+		const struct comp_swapchain *sc = (struct comp_swapchain *)comp_layer_get_swapchain(&quads[q], 0);
+		if ((vk_csci_get_image_usage_flags(render->r->vk, (VkFormat)sc->vkic.info.format, sc->vkic.info.bits) &
+		     VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0) {
+			continue;
+		}
+		VkFormat format = (VkFormat)sc->vkic.info.format;
+		if (sc->vkic.info.create & XRT_SWAPCHAIN_CREATE_SAMPLE_AS_SRGB) {
+			format = vk_format_convert_unorm_to_srgb(format);
+		}
+		VkExtent2D extent = {sc->vkic.info.width, sc->vkic.info.height};
+		uint32_t max_levels = 1;
+		while ((MAX(extent.width, extent.height) >> max_levels) > 0) {
+			max_levels++;
+		}
+		struct quad_mip *m = quad_mip_get(render->r->vk, sc->vkic.images[qd->sub.image_index].handle,
+		                                  qd->sub.array_index, extent, format, MIN(levels, max_levels));
+		if (m == NULL) {
+			continue;
+		}
+		quad_mip_record(render->r->vk, render->r->cmd, m);
+		md.quad_views[q][0] = m->views[0];
+		md.quad_views[q][1] = m->views[1];
 	}
 
 	crg_distortion_common( //
@@ -958,13 +1420,26 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 			U_LOG_W("Wanted fast path but no projection layer, falling back to layer squasher.");
 		}
 
+		// SteamVR draws quads in the distortion pass, after all projection content: split them off the squash.
+		static struct comp_layer squashed[RENDER_MAX_LAYERS];
+		static struct comp_layer quads[RENDER_MAX_LAYERS];
+		uint32_t squash_count = 0;
+		uint32_t quad_count = 0;
+		for (uint32_t i = 0; i < layer_count; i++) {
+			if (debug_get_bool_option_quad_direct() && layers[i].data.type == XRT_LAYER_QUAD) {
+				quads[quad_count++] = layers[i];
+			} else {
+				squashed[squash_count++] = layers[i];
+			}
+		}
+
 		/*
 		 * Layer squashing.
 		 */
 		comp_render_gfx_layers( //
 		    render,             //
-		    layers,             //
-		    layer_count,        //
+		    squashed,           //
+		    squash_count,       //
 		    d,                  //
 		    transition_to);     //
 
@@ -973,7 +1448,9 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 		 */
 		crg_distortion_after_squash( //
 		    render,                  //
-		    d);
+		    d,                       //
+		    quads,                   //
+		    quad_count);             //
 
 	} else {
 		// Just clear the screen

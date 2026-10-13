@@ -517,6 +517,12 @@ struct mesh_params
 	uint32_t do_timewarp;
 };
 
+struct mesh_blend
+{
+	bool enable;
+	VkBlendFactor src_color;
+};
+
 XRT_CHECK_RESULT static VkResult
 create_mesh_pipeline(struct vk_bundle *vk,
                      VkRenderPass render_pass,
@@ -526,6 +532,7 @@ create_mesh_pipeline(struct vk_bundle *vk,
                      uint32_t mesh_index_count_total,
                      uint32_t mesh_stride,
                      const struct mesh_params *params,
+                     const struct mesh_blend *blend,
                      VkShaderModule mesh_vert,
                      VkShaderModule mesh_frag,
                      VkPipeline *out_mesh_pipeline)
@@ -558,7 +565,13 @@ create_mesh_pipeline(struct vk_bundle *vk,
 	};
 
 	VkPipelineColorBlendAttachmentState blend_attachment_state = {
-	    .blendEnable = VK_FALSE,
+	    .blendEnable = blend->enable,
+	    .srcColorBlendFactor = blend->src_color,
+	    .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+	    .colorBlendOp = VK_BLEND_OP_ADD,
+	    .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+	    .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+	    .alphaBlendOp = VK_BLEND_OP_ADD,
 	    .colorWriteMask = 0xf,
 	};
 
@@ -729,6 +742,7 @@ render_gfx_render_pass_init(struct render_gfx_render_pass *rgrp,
 	struct mesh_params simple_params = {
 	    .do_timewarp = false,
 	};
+	struct mesh_blend no_blend = {.enable = false};
 
 	ret = create_mesh_pipeline(    //
 	    vk,                        //
@@ -739,6 +753,7 @@ render_gfx_render_pass_init(struct render_gfx_render_pass *rgrp,
 	    r->mesh.index_count_total, //
 	    r->mesh.stride,            //
 	    &simple_params,            //
+	    &no_blend,                 //
 	    r->shaders->mesh_vert,     //
 	    r->shaders->mesh_frag,     //
 	    &rgrp->mesh.pipeline);     // out_mesh_pipeline
@@ -758,11 +773,37 @@ render_gfx_render_pass_init(struct render_gfx_render_pass *rgrp,
 	    r->mesh.index_count_total,      //
 	    r->mesh.stride,                 //
 	    &timewarp_params,               //
+	    &no_blend,                      //
 	    r->shaders->mesh_vert,          //
 	    r->shaders->mesh_frag,          //
 	    &rgrp->mesh.pipeline_timewarp); // out_mesh_pipeline
 	VK_CHK_WITH_RET(ret, "create_mesh_pipeline", false);
 	VK_NAME_PIPELINE(vk, rgrp->mesh.pipeline_timewarp, "render_gfx_render_pass mesh pipeline timewarp");
+
+	for (uint32_t tw = 0; tw < 2; tw++) {
+		for (uint32_t pm = 0; pm < 2; pm++) {
+			struct mesh_params quad_params = {.do_timewarp = tw};
+			struct mesh_blend quad_blend = {
+			    .enable = true,
+			    .src_color = pm ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA,
+			};
+			ret = create_mesh_pipeline(              //
+			    vk,                                  //
+			    rgrp->render_pass,                   //
+			    r->mesh.pipeline_layout,             //
+			    r->pipeline_cache,                   //
+			    r->mesh.src_binding,                 //
+			    r->mesh.index_count_total,           //
+			    r->mesh.stride,                      //
+			    &quad_params,                        //
+			    &quad_blend,                         //
+			    r->shaders->mesh_vert,               //
+			    r->shaders->mesh_quad_frag,          //
+			    &rgrp->mesh.quad_pipelines[tw][pm]); // out_mesh_pipeline
+			VK_CHK_WITH_RET(ret, "create_mesh_pipeline", false);
+			VK_NAME_PIPELINE(vk, rgrp->mesh.quad_pipelines[tw][pm], "render_gfx_render_pass mesh quad pipeline");
+		}
+	}
 
 	const VkBlendFactor blend_factor_premultiplied_alpha = VK_BLEND_FACTOR_ONE;
 	const VkBlendFactor blend_factor_unpremultiplied_alpha = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -892,6 +933,11 @@ render_gfx_render_pass_fini(struct render_gfx_render_pass *rgrp)
 	D(RenderPass, rgrp->render_pass);
 	D(Pipeline, rgrp->mesh.pipeline);
 	D(Pipeline, rgrp->mesh.pipeline_timewarp);
+	for (uint32_t tw = 0; tw < 2; tw++) {
+		for (uint32_t pm = 0; pm < 2; pm++) {
+			D(Pipeline, rgrp->mesh.quad_pipelines[tw][pm]);
+		}
+	}
 
 	D(Pipeline, rgrp->layer.cylinder_premultiplied_alpha);
 	D(Pipeline, rgrp->layer.cylinder_unpremultiplied_alpha);
@@ -1189,8 +1235,8 @@ render_gfx_mesh_alloc_and_write(struct render_gfx *render,
 	    out_descriptor_set);                //
 }
 
-void
-render_gfx_mesh_draw(struct render_gfx *render, uint32_t mesh_index, VkDescriptorSet descriptor_set, bool do_timewarp)
+static void
+mesh_draw_with_pipeline(struct render_gfx *render, uint32_t mesh_index, VkDescriptorSet descriptor_set, VkPipeline pipeline)
 {
 	struct vk_bundle *vk = vk_from_render(render);
 	struct render_resources *r = render->r;
@@ -1210,10 +1256,6 @@ render_gfx_mesh_draw(struct render_gfx *render, uint32_t mesh_index, VkDescripto
 	    descriptor_sets,                 // pDescriptorSets
 	    0,                               // dynamicOffsetCount
 	    NULL);                           // pDynamicOffsets
-
-	// Select which pipeline we want.
-	VkPipeline pipeline =
-	    do_timewarp ? render->rtr->rgrp->mesh.pipeline_timewarp : render->rtr->rgrp->mesh.pipeline;
 
 	vk->vkCmdBindPipeline(               //
 	    r->cmd,                          //
@@ -1263,6 +1305,50 @@ render_gfx_mesh_draw(struct render_gfx *render, uint32_t mesh_index, VkDescripto
 		    0,                    // firstVertex
 		    0);                   // firstInstance
 	}
+}
+
+void
+render_gfx_mesh_draw(struct render_gfx *render, uint32_t mesh_index, VkDescriptorSet descriptor_set, bool do_timewarp)
+{
+	// Select which pipeline we want.
+	VkPipeline pipeline =
+	    do_timewarp ? render->rtr->rgrp->mesh.pipeline_timewarp : render->rtr->rgrp->mesh.pipeline;
+
+	mesh_draw_with_pipeline(render, mesh_index, descriptor_set, pipeline);
+}
+
+XRT_CHECK_RESULT VkResult
+render_gfx_mesh_quad_alloc_and_write(struct render_gfx *render,
+                                     const struct render_gfx_mesh_quad_ubo_data *data,
+                                     VkSampler src_sampler,
+                                     VkImageView src_image_view,
+                                     VkDescriptorSet *out_descriptor_set)
+{
+	struct render_resources *r = render->r;
+
+	return do_ubo_and_src_alloc_and_write(  //
+	    render,                             //
+	    r->mesh.ubo_binding,                //
+	    data,                               // ubo_ptr
+	    sizeof(*data),                      // ubo_size
+	    r->mesh.src_binding,                //
+	    src_sampler,                        //
+	    src_image_view,                     //
+	    r->gfx.ubo_and_src_descriptor_pool, //
+	    r->mesh.descriptor_set_layout,      //
+	    out_descriptor_set);                //
+}
+
+void
+render_gfx_mesh_quad_draw(struct render_gfx *render,
+                          uint32_t mesh_index,
+                          VkDescriptorSet descriptor_set,
+                          bool do_timewarp,
+                          bool premultiplied_alpha)
+{
+	VkPipeline pipeline = render->rtr->rgrp->mesh.quad_pipelines[do_timewarp][premultiplied_alpha];
+
+	mesh_draw_with_pipeline(render, mesh_index, descriptor_set, pipeline);
 }
 
 

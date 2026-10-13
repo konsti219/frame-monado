@@ -18,6 +18,13 @@
 #include "vk/vk_mini_helpers.h"
 
 #include "render/render_interface.h"
+#include "util/u_debug.h"
+#include "math/m_mathinclude.h"
+
+// Max anisotropy of the quad layer sampler, SteamVR uses 16.
+DEBUG_GET_ONCE_NUM_OPTION(quad_aniso, "SF_QUAD_ANISO", 16)
+// Mip LOD bias of the quad layer sampler, SteamVR's distort_geom_simplified_ps gets -0.2 (its UBO, traced).
+DEBUG_GET_ONCE_FLOAT_OPTION(quad_lod_bias, "SF_QUAD_LOD_BIAS", -0.2f)
 
 #include "cache/render_compute_pipeline_cache.h"
 #include "cache/render_shader_specialization_helpers.h"
@@ -413,6 +420,73 @@ teardown_scratch_color_image(struct vk_bundle *vk, struct render_scratch_color_i
 }
 
 
+/// Undistorted (green) uv to mesh position per view: closest vertex per cell, gaps filled from neighbours.
+static void
+build_mesh_inverse(struct render_resources *r, const struct xrt_hmd_parts *parts)
+{
+	const int n = RENDER_MESH_INVERSE_SIZE;
+	const uint32_t floats = parts->distortion.mesh.stride / sizeof(float);
+	r->mesh.has_inverse = false;
+	if (parts->distortion.mesh.index_count_total == 0 || parts->distortion.mesh.vertices == NULL ||
+	    parts->distortion.mesh.indices == NULL) {
+		return;
+	}
+
+	static float best[RENDER_MESH_INVERSE_SIZE][RENDER_MESH_INVERSE_SIZE];
+	static int pass_filled[RENDER_MESH_INVERSE_SIZE][RENDER_MESH_INVERSE_SIZE];
+	for (uint32_t view = 0; view < r->view_count && view < XRT_MAX_VIEWS; view++) {
+		for (int y = 0; y < n; y++) {
+			for (int x = 0; x < n; x++) {
+				best[y][x] = INFINITY;
+				pass_filled[y][x] = -1;
+			}
+		}
+		const uint32_t first = parts->distortion.mesh.index_offsets[view];
+		const uint32_t count = parts->distortion.mesh.index_counts[view];
+		for (uint32_t i = first; i < first + count; i++) {
+			const float *v = parts->distortion.mesh.vertices + (size_t)parts->distortion.mesh.indices[i] * floats;
+			float u = v[4], w = v[5]; // pos xy, red uv, green uv, blue uv
+			int cx = (int)floorf(u * n), cy = (int)floorf(w * n);
+			if (cx < 0 || cy < 0 || cx >= n || cy >= n) {
+				continue;
+			}
+			float du = u * n - ((float)cx + 0.5f), dv = w * n - ((float)cy + 0.5f);
+			float d = du * du + dv * dv;
+			if (d < best[cy][cx]) {
+				best[cy][cx] = d;
+				pass_filled[cy][cx] = 0;
+				r->mesh.inverse[view][cy][cx] = (struct xrt_vec2){v[0], v[1]};
+			}
+		}
+		for (int pass = 1; pass < 2 * n; pass++) {
+			bool changed = false;
+			for (int y = 0; y < n; y++) {
+				for (int x = 0; x < n; x++) {
+					if (pass_filled[y][x] >= 0) {
+						continue;
+					}
+					static const int off[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+					for (int k = 0; k < 4; k++) {
+						int nx = x + off[k][0], ny = y + off[k][1];
+						if (nx >= 0 && ny >= 0 && nx < n && ny < n && pass_filled[ny][nx] >= 0 &&
+						    pass_filled[ny][nx] < pass) {
+							r->mesh.inverse[view][y][x] = r->mesh.inverse[view][ny][nx];
+							pass_filled[y][x] = pass;
+							changed = true;
+							break;
+						}
+					}
+				}
+			}
+			if (!changed) {
+				break;
+			}
+		}
+	}
+	r->mesh.has_inverse = true;
+}
+
+
 /*
  *
  * 'Exported' renderer functions.
@@ -452,6 +526,8 @@ render_resources_init(struct render_resources *r,
 		r->mesh.index_counts[i] = parts->distortion.mesh.index_counts[i];
 		r->mesh.index_offsets[i] = parts->distortion.mesh.index_offsets[i];
 	}
+	build_mesh_inverse(r, parts);
+
 	r->compute.src_binding = 0;
 	r->compute.distortion_binding = 1;
 	r->compute.target_binding = 2;
@@ -496,6 +572,27 @@ render_resources_init(struct render_resources *r,
 	VK_CHK_WITH_RET(ret, "vk_create_sampler", false);
 
 	VK_NAME_SAMPLER(vk, r->samplers.clamp_to_border_black, "render_resources sampler clamp_to_border_black");
+
+	VkSamplerCreateInfo aniso_info = {
+	    .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+	    .magFilter = VK_FILTER_LINEAR,
+	    .minFilter = VK_FILTER_LINEAR,
+	    .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+	    .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+	    .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+	    .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+	    .anisotropyEnable = vk->features.sampler_anisotropy && debug_get_num_option_quad_aniso() > 1,
+	    .maxAnisotropy = (float)debug_get_num_option_quad_aniso(),
+	    .mipLodBias = debug_get_float_option_quad_lod_bias(),
+	    .maxLod = VK_LOD_CLAMP_NONE,
+	    .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+	};
+	ret = vk->vkCreateSampler(vk->device, &aniso_info, NULL, &r->samplers.clamp_to_edge_aniso);
+	VK_CHK_WITH_RET(ret, "vkCreateSampler", false);
+
+	VK_NAME_SAMPLER(vk, r->samplers.clamp_to_edge_aniso, "render_resources sampler clamp_to_edge_aniso");
+	VK_INFO(vk, "Quad layer sampler: anisotropy %s, max %.0f, LOD bias %.2f",
+	        aniso_info.anisotropyEnable ? "on" : "off", aniso_info.maxAnisotropy, aniso_info.mipLodBias);
 
 
 	/*
@@ -1025,6 +1122,7 @@ render_resources_fini(struct render_resources *r)
 	D(Sampler, r->samplers.repeat);
 	D(Sampler, r->samplers.clamp_to_edge);
 	D(Sampler, r->samplers.clamp_to_border_black);
+	D(Sampler, r->samplers.clamp_to_edge_aniso);
 
 	D(ImageView, r->mock.color.image_view);
 	D(Image, r->mock.color.image);

@@ -62,6 +62,8 @@
 DEBUG_GET_ONCE_BOOL_OPTION(lh_emulate_hand, "LH_EMULATE_HAND", true)
 DEBUG_GET_ONCE_FLOAT_OPTION(lh_override_ipd, "LH_OVERRIDE_IPD_MM", -1.0f)
 DEBUG_GET_ONCE_BOOL_OPTION(lh_standby_on_exit, "LH_STANDBY_ON_EXIT", false)
+// One distortion for all colours, like SteamVR on the Frame: the display's CAC hardware corrects the colour fringes.
+DEBUG_GET_ONCE_BOOL_OPTION(sf_achromatic, "SF_ACHROMATIC", true)
 
 // Each device will have its own input class.
 struct InputClass
@@ -1303,6 +1305,10 @@ HmdDevice::compute_distortion(uint32_t view, float u, float v, xrt_uv_triplet *o
 	out_result->r = {coords.rfRed[0], coords.rfRed[1]};
 	out_result->g = {coords.rfGreen[0], coords.rfGreen[1]};
 	out_result->b = {coords.rfBlue[0], coords.rfBlue[1]};
+	if (debug_get_bool_option_sf_achromatic()) {
+		out_result->r = out_result->g;
+		out_result->b = out_result->g;
+	}
 	return XRT_SUCCESS;
 }
 

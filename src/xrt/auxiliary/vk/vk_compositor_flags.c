@@ -202,6 +202,11 @@ vk_csci_get_image_usage_flags(struct vk_bundle *vk, VkFormat format, enum xrt_sw
 
 #undef TEST
 
+	// The compositor copies colour layers into a mip chain (quad layers, like SteamVR), on both service and client.
+	if ((bits & XRT_SWAPCHAIN_USAGE_COLOR) != 0 && (prop.optimalTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)) {
+		image_usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+	}
+
 	/*
 	 * Should not be handled here.
 	 *

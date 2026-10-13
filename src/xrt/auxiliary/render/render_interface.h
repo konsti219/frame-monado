@@ -66,6 +66,9 @@ extern "C" {
  */
 #define RENDER_MAX_LAYERS (128)
 
+//! Grid size of the inverse distortion lookup in @ref render_resources::mesh.
+#define RENDER_MESH_INVERSE_SIZE (64)
+
 /*!
  * The maximum number samplers per view that can be used by the compute shader
  * for layer composition (layer.comp)
@@ -395,6 +398,9 @@ struct render_resources
 
 		//! Sampler that clamps color samples to black in all directions.
 		VkSampler clamp_to_border_black;
+
+		//! Clamp to edge, 16x anisotropic (when supported): SteamVR's sampler for quad layers.
+		VkSampler clamp_to_edge_aniso;
 	} samplers;
 
 	struct
@@ -449,6 +455,10 @@ struct render_resources
 
 		//! Info UBOs.
 		struct render_buffer ubos[XRT_MAX_VIEWS];
+
+		//! Undistorted (green) uv to mesh position, per view, for bounding layers drawn in the distortion pass.
+		struct xrt_vec2 inverse[XRT_MAX_VIEWS][RENDER_MESH_INVERSE_SIZE][RENDER_MESH_INVERSE_SIZE];
+		bool has_inverse;
 	} mesh;
 
 	/*!
@@ -731,6 +741,9 @@ struct render_gfx_render_pass
 
 		//! Pipeline layout used for mesh, with timewarp.
 		VkPipeline pipeline_timewarp;
+
+		//! Quad layers drawn directly in the distortion pass, [timewarp][premultiplied].
+		VkPipeline quad_pipelines[2][2];
 	} mesh;
 
 	struct
@@ -913,6 +926,22 @@ struct render_gfx_mesh_ubo_data
 	struct xrt_normalized_rect pre_transform;
 	struct xrt_matrix_4x4 transform_scanout_begin;
 	struct xrt_matrix_4x4 transform_scanout_end;
+};
+
+/*!
+ * UBO data for drawing a quad layer directly in the distortion pass (mesh_quad.frag), starts with the mesh data.
+ *
+ * @relates render_gfx
+ */
+struct render_gfx_mesh_quad_ubo_data
+{
+	struct render_gfx_mesh_ubo_data mesh;
+
+	//! Scratch NDC to quad plane, rows of a 3x3 inverse homography (w unused).
+	float ndc_to_quad[3][4];
+	struct xrt_normalized_rect quad_post_transform;
+	struct xrt_colour_rgba_f32 color_scale;
+	struct xrt_colour_rgba_f32 color_bias;
 };
 
 /*!
@@ -1120,6 +1149,30 @@ render_gfx_end_view(struct render_gfx *render);
  */
 void
 render_gfx_mesh_draw(struct render_gfx *render, uint32_t mesh_index, VkDescriptorSet descriptor_set, bool do_timewarp);
+
+/*!
+ * Allocate and write a UBO and descriptor set for a quad layer drawn in the distortion pass.
+ *
+ * @public @memberof render_gfx
+ */
+XRT_CHECK_RESULT VkResult
+render_gfx_mesh_quad_alloc_and_write(struct render_gfx *render,
+                                     const struct render_gfx_mesh_quad_ubo_data *data,
+                                     VkSampler src_sampler,
+                                     VkImageView src_image_view,
+                                     VkDescriptorSet *out_descriptor_set);
+
+/*!
+ * Draw a quad layer over a view in the distortion pass, see @ref render_gfx_mesh_quad_alloc_and_write.
+ *
+ * @public @memberof render_gfx
+ */
+void
+render_gfx_mesh_quad_draw(struct render_gfx *render,
+                          uint32_t mesh_index,
+                          VkDescriptorSet descriptor_set,
+                          bool do_timewarp,
+                          bool premultiplied_alpha);
 
 /*!
  * Dispatch a cylinder layer shader into the current target and view.

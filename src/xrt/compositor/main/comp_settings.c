@@ -31,7 +31,7 @@ DEBUG_GET_ONCE_NUM_OPTION(force_gpu_index, "XRT_COMPOSITOR_FORCE_GPU_INDEX", -1)
 DEBUG_GET_ONCE_NUM_OPTION(force_client_gpu_index, "XRT_COMPOSITOR_FORCE_CLIENT_GPU_INDEX", -1)
 DEBUG_GET_ONCE_NUM_OPTION(desired_mode, "XRT_COMPOSITOR_DESIRED_MODE", -1)
 DEBUG_GET_ONCE_OPTION(present_mode, "XRT_COMPOSITOR_PRESENT_MODE", "fifo")
-DEBUG_GET_ONCE_NUM_OPTION(scale_percentage, "XRT_COMPOSITOR_SCALE_PERCENTAGE", 140)
+DEBUG_GET_ONCE_FLOAT_OPTION(scale_percentage, "XRT_COMPOSITOR_SCALE_PERCENTAGE", 140.0f)
 DEBUG_GET_ONCE_BOOL_OPTION(xcb_fullscreen, "XRT_COMPOSITOR_XCB_FULLSCREEN", false)
 DEBUG_GET_ONCE_NUM_OPTION(xcb_display, "XRT_COMPOSITOR_XCB_DISPLAY", -1)
 DEBUG_GET_ONCE_NUM_OPTION(default_framerate, "XRT_COMPOSITOR_DEFAULT_FRAMERATE", 60)
@@ -172,7 +172,7 @@ comp_settings_init(struct comp_settings *s, struct xrt_device *xdev)
 	s->selected_gpu_index = debug_get_num_option_force_gpu_index();
 	s->client_gpu_index = debug_get_num_option_force_client_gpu_index();
 	s->desired_mode = debug_get_num_option_desired_mode();
-	s->viewport_scale = debug_get_num_option_scale_percentage() / 100.0;
+	s->viewport_scale = debug_get_float_option_scale_percentage() / 100.0;
 
 
 	s->nvidia_display = debug_get_option_nvidia_display();

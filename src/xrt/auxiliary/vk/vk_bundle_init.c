@@ -773,6 +773,8 @@ filter_device_features(struct vk_bundle *vk,
 	CHECK(shader_storage_image_write_without_format,
 	      physical_device_features.features.shaderStorageImageWriteWithoutFormat);
 
+	CHECK(sampler_anisotropy, physical_device_features.features.samplerAnisotropy);
+
 #undef CHECK
 
 
@@ -903,6 +905,7 @@ vk_create_device(struct vk_bundle *vk,
 	filter_device_features(vk, vk->physical_device, optional_device_features, &device_features);
 	vk->features.timeline_semaphore = device_features.timeline_semaphore;
 	vk->features.synchronization_2 = device_features.synchronization_2;
+	vk->features.sampler_anisotropy = device_features.sampler_anisotropy;
 	vk->features.present_id = device_features.present_id;
 	vk->features.present_id2 = device_features.present_id2;
 	vk->features.present_wait = device_features.present_wait;
@@ -1078,6 +1081,7 @@ vk_create_device(struct vk_bundle *vk,
 	VkPhysicalDeviceFeatures enabled_features = {
 	    .shaderImageGatherExtended = device_features.shader_image_gather_extended,
 	    .shaderStorageImageWriteWithoutFormat = device_features.shader_storage_image_write_without_format,
+	    .samplerAnisotropy = device_features.sampler_anisotropy,
 	};
 
 	VkDeviceCreateInfo device_create_info = {

@@ -199,6 +199,9 @@ struct vk_bundle
 		//! Was synchronization2 requested, available, and enabled?
 		bool synchronization_2;
 
+		//! Was samplerAnisotropy requested, available, and enabled?
+		bool sampler_anisotropy;
+
 		//! Was KHR_present_id requested, available, and enabled?
 		bool present_id;
 
@@ -768,6 +771,7 @@ struct vk_device_features
 {
 	bool shader_image_gather_extended;
 	bool shader_storage_image_write_without_format;
+	bool sampler_anisotropy;
 	bool null_descriptor;
 	bool timeline_semaphore;
 	bool synchronization_2;
