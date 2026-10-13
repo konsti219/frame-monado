@@ -940,6 +940,13 @@ struct render_gfx_mesh_quad_ubo_data
 	struct xrt_normalized_rect quad_post_transform;
 	struct xrt_colour_rgba_f32 color_scale;
 	struct xrt_colour_rgba_f32 color_bias;
+
+	//! Cylinder layers: scratch NDC to ray direction in cylinder space, rows of a 3x3 (w unused).
+	float ndc_to_dir[3][4];
+	//! Ray origin in cylinder space, radius in w.
+	float cylinder_origin[4];
+	//! Central angle, height, 1 for a cylinder (0 for a quad), unused.
+	float cylinder_params[4];
 };
 
 /*!

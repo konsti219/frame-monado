@@ -108,7 +108,7 @@ struct gfx_mesh_data
 {
 	struct gfx_mesh_view_data views[XRT_MAX_VIEWS];
 
-	//! Quad layers on top of everything else, drawn directly in the distortion pass.
+	//! Quad and cylinder layers on top of everything else, drawn directly in the distortion pass.
 	const struct comp_layer *quads;
 	uint32_t quad_count;
 
@@ -682,11 +682,14 @@ crg_clear_output(struct render_gfx *render, const struct comp_render_dispatch_da
  *
  */
 
-/// Quad layer drawn in the distortion pass: maps the scratch NDC the mesh samples back onto the quad plane.
-/// Panel scissor around a quad: its outline through the inverse distortion table, with a margin for timewarp.
+/// Quad or cylinder layer drawn in the distortion pass: maps the scratch NDC the mesh samples back onto the layer.
+/// Panel scissor around a layer: its outline (model space points through mvp) through the inverse distortion table,
+/// with a margin for timewarp.
 static void
 quad_direct_scissor(const struct render_resources *r,
                     const struct xrt_matrix_4x4 *mvp,
+                    const struct xrt_vec3 *outline,
+                    int outline_count,
                     const struct comp_render_dispatch_data *d,
                     uint32_t view,
                     render_scissor_data_t *out)
@@ -700,48 +703,43 @@ quad_direct_scissor(const struct render_resources *r,
 	const struct render_viewport_data *vp = &d->views[view].target.viewport_data;
 	const struct xrt_matrix_2x2 *rot = &d->views[view].target.gfx.vertex_rot;
 	const int n = RENDER_MESH_INVERSE_SIZE;
-	const int steps = 16;
 	float min_x = INFINITY, min_y = INFINITY, max_x = -INFINITY, max_y = -INFINITY;
 	int behind = 0;
 
-	for (int e = 0; e < 4; e++) {
-		for (int i = 0; i <= steps; i++) {
-			float t = (float)i / (float)steps - 0.5f;
-			float qx = e == 0 ? t : e == 1 ? 0.5f : e == 2 ? -t : -0.5f;
-			float qy = e == 0 ? -0.5f : e == 1 ? t : e == 2 ? 0.5f : -t;
-			float cx = mvp->v[0] * qx + mvp->v[4] * qy + mvp->v[12];
-			float cy = mvp->v[1] * qx + mvp->v[5] * qy + mvp->v[13];
-			float cw = mvp->v[3] * qx + mvp->v[7] * qy + mvp->v[15];
-			if (cw <= 1e-4f) {
-				behind++;
-				continue;
-			}
-
-			// Scratch uv to table cell (bilinear), clamped to the mesh.
-			float gx = CLAMP((cx / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
-			float gy = CLAMP((cy / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
-			int x0 = MIN((int)gx, n - 2), y0 = MIN((int)gy, n - 2);
-			float fx = gx - (float)x0, fy = gy - (float)y0;
-			const struct xrt_vec2 *a = &r->mesh.inverse[view][y0][x0];
-			const struct xrt_vec2 *b = &r->mesh.inverse[view][y0][x0 + 1];
-			const struct xrt_vec2 *c = &r->mesh.inverse[view][y0 + 1][x0];
-			const struct xrt_vec2 *dd = &r->mesh.inverse[view][y0 + 1][x0 + 1];
-			float px = (a->x * (1 - fx) + b->x * fx) * (1 - fy) + (c->x * (1 - fx) + dd->x * fx) * fy;
-			float py = (a->y * (1 - fx) + b->y * fx) * (1 - fy) + (c->y * (1 - fx) + dd->y * fx) * fy;
-
-			// Mesh position to target pixels, like mesh.vert.
-			float ox = rot->v[0] * px + rot->v[2] * py;
-			float oy = rot->v[1] * px + rot->v[3] * py;
-			float sx = (float)vp->x + (ox * 0.5f + 0.5f) * (float)vp->w;
-			float sy = (float)vp->y + (oy * 0.5f + 0.5f) * (float)vp->h;
-			min_x = MIN(min_x, sx);
-			min_y = MIN(min_y, sy);
-			max_x = MAX(max_x, sx);
-			max_y = MAX(max_y, sy);
+	for (int i = 0; i < outline_count; i++) {
+		const struct xrt_vec3 *o = &outline[i];
+		float cx = mvp->v[0] * o->x + mvp->v[4] * o->y + mvp->v[8] * o->z + mvp->v[12];
+		float cy = mvp->v[1] * o->x + mvp->v[5] * o->y + mvp->v[9] * o->z + mvp->v[13];
+		float cw = mvp->v[3] * o->x + mvp->v[7] * o->y + mvp->v[11] * o->z + mvp->v[15];
+		if (cw <= 1e-4f) {
+			behind++;
+			continue;
 		}
+
+		// Scratch uv to table cell (bilinear), clamped to the mesh.
+		float gx = CLAMP((cx / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+		float gy = CLAMP((cy / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+		int x0 = MIN((int)gx, n - 2), y0 = MIN((int)gy, n - 2);
+		float fx = gx - (float)x0, fy = gy - (float)y0;
+		const struct xrt_vec2 *a = &r->mesh.inverse[view][y0][x0];
+		const struct xrt_vec2 *b = &r->mesh.inverse[view][y0][x0 + 1];
+		const struct xrt_vec2 *c = &r->mesh.inverse[view][y0 + 1][x0];
+		const struct xrt_vec2 *dd = &r->mesh.inverse[view][y0 + 1][x0 + 1];
+		float px = (a->x * (1 - fx) + b->x * fx) * (1 - fy) + (c->x * (1 - fx) + dd->x * fx) * fy;
+		float py = (a->y * (1 - fx) + b->y * fx) * (1 - fy) + (c->y * (1 - fx) + dd->y * fx) * fy;
+
+		// Mesh position to target pixels, like mesh.vert.
+		float ox = rot->v[0] * px + rot->v[2] * py;
+		float oy = rot->v[1] * px + rot->v[3] * py;
+		float sx = (float)vp->x + (ox * 0.5f + 0.5f) * (float)vp->w;
+		float sy = (float)vp->y + (oy * 0.5f + 0.5f) * (float)vp->h;
+		min_x = MIN(min_x, sx);
+		min_y = MIN(min_y, sy);
+		max_x = MAX(max_x, sx);
+		max_y = MAX(max_y, sy);
 	}
 
-	if (behind == 4 * (steps + 1)) {
+	if (behind == outline_count) {
 		out->w = 0; // All behind the eye.
 		out->h = 0;
 		return;
@@ -775,6 +773,98 @@ quad_direct_scissor(const struct render_resources *r,
 	out->h = (uint32_t)(y1 - y0);
 }
 
+/// Sub-image of a layer drawn in the distortion pass.
+static const struct xrt_sub_image *
+direct_layer_sub(const struct comp_layer *layer)
+{
+	return layer->data.type == XRT_LAYER_CYLINDER ? &layer->data.cylinder.sub : &layer->data.quad.sub;
+}
+
+/// Cylinder point for layer uv, as in layer_cylinder.vert.
+static struct xrt_vec3
+cylinder_point(const struct xrt_layer_cylinder_data *c, float radius, float u, float v)
+{
+	float a = (u - 0.5f) * c->central_angle;
+	float height = c->central_angle * radius / c->aspect_ratio;
+	return (struct xrt_vec3){sinf(a) * radius, (0.5f - v) * height, -cosf(a) * radius};
+}
+
+/// Cylinder layer: rays from the scratch NDC into cylinder space, intersected in mesh_quad.frag.
+static void
+cylinder_direct_data(const struct render_resources *r,
+                     const struct comp_layer *layer,
+                     const struct comp_render_dispatch_data *d,
+                     uint32_t view,
+                     const struct xrt_matrix_4x4 *vp,
+                     struct render_gfx_mesh_quad_ubo_data *data,
+                     render_scissor_data_t *out_scissor)
+{
+	const struct xrt_layer_data *layer_data = &layer->data;
+	const struct xrt_layer_cylinder_data *c = &layer_data->cylinder;
+	const struct xrt_pose *eye =
+	    is_layer_view_space(layer_data) ? &d->views[view].eye_pose : &d->views[view].world_pose_scanout_begin;
+
+	// Eye in cylinder space; an infinite radius keeps the cylinder centred on the eye, like do_cylinder_layer.
+	bool infinite = c->radius == 0 || c->radius == INFINITY;
+	float radius = infinite ? 1.0f : c->radius;
+	struct xrt_pose inv_layer, rel;
+	math_pose_invert(&c->pose, &inv_layer);
+	math_pose_transform(&inv_layer, eye, &rel);
+	if (infinite) {
+		rel.position = (struct xrt_vec3){0, 0, 0};
+	}
+
+	// Scratch NDC to view direction (Vulkan projection, y down, looking along -z), then into cylinder space.
+	const struct xrt_fov *fov = &d->views[view].fov;
+	float tl = tanf(fov->angle_left), tr = tanf(fov->angle_right);
+	float tu = tanf(fov->angle_up), td = tanf(fov->angle_down);
+	struct xrt_vec3 ex = {1, 0, 0}, ey = {0, 1, 0}, ez = {0, 0, 1}, rx, ry, rz;
+	math_quat_rotate_vec3(&rel.orientation, &ex, &rx);
+	math_quat_rotate_vec3(&rel.orientation, &ey, &ry);
+	math_quat_rotate_vec3(&rel.orientation, &ez, &rz);
+	float hw = (tr - tl) * 0.5f, cx = (tr + tl) * 0.5f, hh = (td - tu) * 0.5f, cy = (tu + td) * 0.5f;
+	const float cols[3][3] = {
+	    {hw * rx.x, hw * rx.y, hw * rx.z},
+	    {hh * ry.x, hh * ry.y, hh * ry.z},
+	    {cx * rx.x + cy * ry.x - rz.x, cx * rx.y + cy * ry.y - rz.y, cx * rx.z + cy * ry.z - rz.z},
+	};
+	for (int r = 0; r < 3; r++) {
+		for (int k = 0; k < 3; k++) {
+			data->ndc_to_dir[r][k] = cols[k][r];
+		}
+	}
+	data->cylinder_origin[0] = rel.position.x;
+	data->cylinder_origin[1] = rel.position.y;
+	data->cylinder_origin[2] = rel.position.z;
+	data->cylinder_origin[3] = radius;
+	data->cylinder_params[0] = c->central_angle;
+	data->cylinder_params[1] = c->central_angle * radius / c->aspect_ratio;
+	data->cylinder_params[2] = 1.0f;
+
+	if (infinite) {
+		*out_scissor = d->views[view].target.scissor_data;
+		return;
+	}
+
+	// Outline: both arcs and both sides.
+	enum { ARC = 32, SIDE = 8 };
+	struct xrt_vec3 outline[2 * (ARC + 1) + 2 * (SIDE + 1)];
+	int count = 0;
+	for (int i = 0; i <= ARC; i++) {
+		outline[count++] = cylinder_point(c, radius, (float)i / ARC, 0.0f);
+		outline[count++] = cylinder_point(c, radius, (float)i / ARC, 1.0f);
+	}
+	for (int i = 0; i <= SIDE; i++) {
+		outline[count++] = cylinder_point(c, radius, 0.0f, (float)i / SIDE);
+		outline[count++] = cylinder_point(c, radius, 1.0f, (float)i / SIDE);
+	}
+	struct xrt_matrix_4x4 model, mvp;
+	struct xrt_vec3 scale = {1, 1, 1};
+	math_matrix_4x4_model(&c->pose, &scale, &model);
+	math_matrix_4x4_multiply(vp, &model, &mvp);
+	quad_direct_scissor(r, &mvp, outline, count, d, view, out_scissor);
+}
+
 static VkResult
 quad_direct_alloc_and_write(struct render_gfx *render,
                             const struct comp_layer *layer,
@@ -786,16 +876,13 @@ quad_direct_alloc_and_write(struct render_gfx *render,
                             VkDescriptorSet *out_descriptor_set)
 {
 	const struct xrt_layer_data *layer_data = &layer->data;
-	const struct xrt_layer_quad_data *q = &layer_data->quad;
-	const struct comp_swapchain_image *image = get_layer_image(layer, 0, q->sub.image_index);
+	const struct xrt_sub_image *sub = direct_layer_sub(layer);
+	const struct comp_swapchain_image *image = get_layer_image(layer, 0, sub->image_index);
 
 	*out_descriptor_set = VK_NULL_HANDLE;
-	if (!(q->size.x > 0.0f) || !(q->size.y > 0.0f)) {
-		return VK_SUCCESS;
-	}
 
 	// Same view projection as the squash of this view.
-	struct xrt_matrix_4x4 p, v, vp, model, mvp;
+	struct xrt_matrix_4x4 p, v, vp;
 	math_matrix_4x4_projection_vulkan_infinite_reverse(&d->views[view].fov, 0.1, &p);
 	if (is_layer_view_space(layer_data)) {
 		math_matrix_4x4_view_from_pose(&d->views[view].eye_pose, &v);
@@ -803,44 +890,71 @@ quad_direct_alloc_and_write(struct render_gfx *render,
 		math_matrix_4x4_view_from_pose(&d->views[view].world_pose_scanout_begin, &v);
 	}
 	math_matrix_4x4_multiply(&p, &v, &vp);
-	struct xrt_vec3 scale = {q->size.x, q->size.y, 1};
-	math_matrix_4x4_model(&q->pose, &scale, &model);
-	math_matrix_4x4_multiply(&vp, &model, &mvp);
 
-	quad_direct_scissor(render->r, &mvp, d, view, out_scissor);
+	struct render_gfx_mesh_quad_ubo_data data = {.mesh = *mesh_data};
+
+	if (layer_data->type == XRT_LAYER_CYLINDER) {
+		const struct xrt_layer_cylinder_data *c = &layer_data->cylinder;
+		if (!(c->central_angle > 0.0f) || !(c->aspect_ratio > 0.0f)) {
+			return VK_SUCCESS;
+		}
+		cylinder_direct_data(render->r, layer, d, view, &vp, &data, out_scissor);
+	} else {
+		const struct xrt_layer_quad_data *q = &layer_data->quad;
+		if (!(q->size.x > 0.0f) || !(q->size.y > 0.0f)) {
+			return VK_SUCCESS;
+		}
+		struct xrt_matrix_4x4 model, mvp;
+		struct xrt_vec3 scale = {q->size.x, q->size.y, 1};
+		math_matrix_4x4_model(&q->pose, &scale, &model);
+		math_matrix_4x4_multiply(&vp, &model, &mvp);
+
+		// Unit quad outline.
+		enum { STEPS = 16 };
+		struct xrt_vec3 outline[4 * (STEPS + 1)];
+		int count = 0;
+		for (int e = 0; e < 4; e++) {
+			for (int i = 0; i <= STEPS; i++) {
+				float t = (float)i / (float)STEPS - 0.5f;
+				outline[count++] = (struct xrt_vec3){
+				    e == 0 ? t : e == 1 ? 0.5f : e == 2 ? -t : -0.5f,
+				    e == 0 ? -0.5f : e == 1 ? t : e == 2 ? 0.5f : -t,
+				    0.0f,
+				};
+			}
+		}
+		quad_direct_scissor(render->r, &mvp, outline, count, d, view, out_scissor);
+
+		// Quad plane (x, y, 1) to clip (x, y, w), column-major: element (row, col) is v[col * 4 + row].
+		static const int rc[3] = {0, 1, 3};
+		double h[3][3];
+		for (int r = 0; r < 3; r++) {
+			for (int c = 0; c < 3; c++) {
+				h[r][c] = mvp.v[rc[c] * 4 + rc[r]];
+			}
+		}
+		double det = h[0][0] * (h[1][1] * h[2][2] - h[1][2] * h[2][1]) -
+		             h[0][1] * (h[1][0] * h[2][2] - h[1][2] * h[2][0]) +
+		             h[0][2] * (h[1][0] * h[2][1] - h[1][1] * h[2][0]);
+		if (fabs(det) < 1e-12) {
+			return VK_SUCCESS;
+		}
+		for (int r = 0; r < 3; r++) {
+			for (int c = 0; c < 3; c++) {
+				// Inverse via cofactors: inv[r][c] = cof[c][r] / det.
+				int r1 = (c + 1) % 3, r2 = (c + 2) % 3, c1 = (r + 1) % 3, c2 = (r + 2) % 3;
+				data.ndc_to_quad[r][c] = (float)((h[r1][c1] * h[r2][c2] - h[r1][c2] * h[r2][c1]) / det);
+			}
+		}
+	}
 	if (out_scissor->w == 0) {
 		return VK_SUCCESS;
 	}
 
-	// Quad plane (x, y, 1) to clip (x, y, w), column-major: element (row, col) is v[col * 4 + row].
-	static const int rc[3] = {0, 1, 3};
-	double h[3][3];
-	for (int r = 0; r < 3; r++) {
-		for (int c = 0; c < 3; c++) {
-			h[r][c] = mvp.v[rc[c] * 4 + rc[r]];
-		}
-	}
-	double det = h[0][0] * (h[1][1] * h[2][2] - h[1][2] * h[2][1]) -
-	             h[0][1] * (h[1][0] * h[2][2] - h[1][2] * h[2][0]) +
-	             h[0][2] * (h[1][0] * h[2][1] - h[1][1] * h[2][0]);
-	if (fabs(det) < 1e-12) {
-		*out_descriptor_set = VK_NULL_HANDLE;
-		return VK_SUCCESS;
-	}
-
-	struct render_gfx_mesh_quad_ubo_data data = {.mesh = *mesh_data};
-	for (int r = 0; r < 3; r++) {
-		for (int c = 0; c < 3; c++) {
-			// Inverse via cofactors: inv[r][c] = cof[c][r] / det.
-			int r1 = (c + 1) % 3, r2 = (c + 2) % 3, c1 = (r + 1) % 3, c2 = (r + 2) % 3;
-			data.ndc_to_quad[r][c] = (float)((h[r1][c1] * h[r2][c2] - h[r1][c2] * h[r2][c1]) / det);
-		}
-	}
-
-	set_post_transform_rect(layer_data, &q->sub.norm_rect, false, &data.quad_post_transform);
+	set_post_transform_rect(layer_data, &sub->norm_rect, false, &data.quad_post_transform);
 	apply_bias_and_scale_from_layer(layer_data, &data.color_scale, &data.color_bias);
 
-	VkImageView src_view = get_image_view(image, layer_data->flags, q->sub.array_index);
+	VkImageView src_view = get_image_view(image, layer_data->flags, sub->array_index);
 	if (mip_views[0] != VK_NULL_HANDLE) {
 		bool alpha = (layer_data->flags & XRT_LAYER_COMPOSITION_BLEND_TEXTURE_SOURCE_ALPHA_BIT) != 0;
 		src_view = mip_views[alpha ? 0 : 1];
@@ -1006,7 +1120,7 @@ crg_distortion_after_squash(struct render_gfx *render,
 	const uint32_t levels = 3;
 	quad_mip_frame++;
 	for (uint32_t q = 0; q < quad_count; q++) {
-		const struct xrt_layer_quad_data *qd = &quads[q].data.quad;
+		const struct xrt_sub_image *sub = direct_layer_sub(&quads[q]);
 		const struct comp_swapchain *sc = (struct comp_swapchain *)comp_layer_get_swapchain(&quads[q], 0);
 		if ((vk_csci_get_image_usage_flags(render->r->vk, (VkFormat)sc->vkic.info.format, sc->vkic.info.bits) &
 		     VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0) {
@@ -1021,8 +1135,8 @@ crg_distortion_after_squash(struct render_gfx *render,
 		while ((MAX(extent.width, extent.height) >> max_levels) > 0) {
 			max_levels++;
 		}
-		struct quad_mip *m = quad_mip_get(render->r->vk, sc->vkic.images[qd->sub.image_index].handle,
-		                                  qd->sub.array_index, extent, format, MIN(levels, max_levels));
+		struct quad_mip *m = quad_mip_get(render->r->vk, sc->vkic.images[sub->image_index].handle,
+		                                  sub->array_index, extent, format, MIN(levels, max_levels));
 		if (m == NULL) {
 			continue;
 		}
@@ -1344,13 +1458,14 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 			U_LOG_W("Wanted fast path but no projection layer, falling back to layer squasher.");
 		}
 
-		// SteamVR draws quads in the distortion pass, after all projection content: split them off the squash.
+		// SteamVR draws quads in the distortion pass, after all projection content: split them (and cylinders) off
+		// the squash.
 		static struct comp_layer squashed[RENDER_MAX_LAYERS];
 		static struct comp_layer quads[RENDER_MAX_LAYERS];
 		uint32_t squash_count = 0;
 		uint32_t quad_count = 0;
 		for (uint32_t i = 0; i < layer_count; i++) {
-			if (layers[i].data.type == XRT_LAYER_QUAD) {
+			if (layers[i].data.type == XRT_LAYER_QUAD || layers[i].data.type == XRT_LAYER_CYLINDER) {
 				quads[quad_count++] = layers[i];
 			} else {
 				squashed[squash_count++] = layers[i];
