@@ -1008,9 +1008,14 @@ comp_target_swapchain_present(struct comp_target *ct,
 	};
 
 #ifdef VK_GOOGLE_display_timing
+	// Mesa's KHR_display WSI holds the image for a vblank when (desired - last vblank) reaches a full refresh period,
+	// so a prediction slightly past the real vblank costs a whole frame. Ask for half a period early: the nearest
+	// refresh cycle, like VK_PRESENT_TIMING_INFO_PRESENT_AT_NEAREST_REFRESH_CYCLE_BIT_EXT.
+	int64_t half_period_ns = ct->c->frame_interval_ns / 2;
+	int64_t present_early_ns = present_slop_ns > half_period_ns ? present_slop_ns : half_period_ns;
 	VkPresentTimeGOOGLE times = {
 	    .presentID = (uint32_t)cts->current_frame_id,
-	    .desiredPresentTime = desired_present_time_ns - present_slop_ns,
+	    .desiredPresentTime = desired_present_time_ns - present_early_ns,
 	};
 
 	VkPresentTimesInfoGOOGLE timings = {
