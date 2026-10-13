@@ -16,7 +16,6 @@
 #include "math/m_mathinclude.h"
 
 #include "util/u_trace_marker.h"
-#include "util/u_debug.h"
 
 #include "vk/vk_helpers.h"
 #include "vk/vk_image_allocator.h"
@@ -117,10 +116,6 @@ struct gfx_mesh_data
 	VkImageView quad_views[RENDER_MAX_LAYERS][2];
 };
 
-// Draw quad layers in the distortion pass, above everything else, instead of squashing them (SteamVR does both).
-DEBUG_GET_ONCE_BOOL_OPTION(quad_direct, "SF_QUAD_DIRECT", true)
-// Mip levels of the per-frame copy of quad images (SteamVR: 3, box filtered), 1 samples the swapchain directly.
-DEBUG_GET_ONCE_NUM_OPTION(quad_mips, "SF_QUAD_MIPS", 3)
 
 
 /*
@@ -670,61 +665,6 @@ do_projection_layer(struct render_gfx *render,
 	return VK_SUCCESS;
 }
 
-/// Data setup for a quad layer
-/// Also allocates and writes a descriptor set!
-static VkResult
-do_quad_layer(struct render_gfx *render,
-              const struct comp_layer *layer,
-              uint32_t view_index,
-              VkSampler clamp_to_edge,
-              VkSampler clamp_to_border_black,
-              struct gfx_layer_view_state *state)
-{
-	const struct xrt_layer_data *layer_data = &layer->data;
-	const struct xrt_layer_quad_data *q = &layer_data->quad;
-	const uint32_t array_index = q->sub.array_index;
-	const struct comp_swapchain_image *image = get_layer_image(layer, 0, q->sub.image_index);
-
-	struct vk_bundle *vk = render->r->vk;
-	VkResult ret;
-
-	// Color
-	VkSampler src_sampler = clamp_to_edge;
-	VkImageView src_image_view = get_image_view(image, layer_data->flags, array_index);
-
-	// Fully initialised below.
-	struct render_gfx_layer_quad_data data;
-
-	// Used for Subimage and OpenGL flip.
-	set_post_transform_rect(   //
-	    layer_data,            // data
-	    &q->sub.norm_rect,     // src_norm_rect
-	    false,                 // invert_flip
-	    &data.post_transform); // out_norm_rect
-
-	// Create MVP matrix, full 6dof mvp needed.
-	struct xrt_vec3 scale = {q->size.x, q->size.y, 1};
-	calc_mvp_full(state, layer_data, &q->pose, &scale, &data.mvp);
-
-	apply_bias_and_scale_from_layer(layer_data, &data.color_scale, &data.color_bias);
-
-	// Can fail if we have too many layers.
-	VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
-	ret = render_gfx_layer_quad_alloc_and_write( //
-	    render,                                  //
-	    &data,                                   //
-	    src_sampler,                             //
-	    src_image_view,                          //
-	    &descriptor_set);                        // out_descriptor_set
-	VK_CHK_AND_RET(ret, "render_gfx_layer_quad_alloc_and_write");
-
-	VK_NAME_DESCRIPTOR_SET(vk, descriptor_set, "render_gfx layer quad descriptor set");
-
-	add_layer(state, layer_data, descriptor_set);
-
-	return VK_SUCCESS;
-}
-
 static void
 crg_clear_output(struct render_gfx *render, const struct comp_render_dispatch_data *d)
 {
@@ -1063,9 +1003,9 @@ crg_distortion_after_squash(struct render_gfx *render,
 	md.quad_count = quad_count;
 
 	// Per-frame mip chain copies of the quads' images, recorded before the distortion render pass.
-	uint32_t levels = (uint32_t)MAX(debug_get_num_option_quad_mips(), 1);
+	const uint32_t levels = 3;
 	quad_mip_frame++;
-	for (uint32_t q = 0; q < quad_count && levels > 1; q++) {
+	for (uint32_t q = 0; q < quad_count; q++) {
 		const struct xrt_layer_quad_data *qd = &quads[q].data.quad;
 		const struct comp_swapchain *sc = (struct comp_swapchain *)comp_layer_get_swapchain(&quads[q], 0);
 		if ((vk_csci_get_image_usage_flags(render->r->vk, (VkFormat)sc->vkic.info.format, sc->vkic.info.bits) &
@@ -1264,16 +1204,6 @@ comp_render_gfx_layers(struct render_gfx *render,
 				    state);                //
 				VK_CHK_WITH_GOTO(ret, "do_projection_layer", err_layer);
 				break;
-			case XRT_LAYER_QUAD:
-				ret = do_quad_layer(       //
-				    render,                //
-				    &layers[i],            //
-				    view,                  // view_index
-				    clamp_to_edge,         //
-				    clamp_to_border_black, //
-				    state);                //
-				VK_CHK_WITH_GOTO(ret, "do_quad_layer", err_layer);
-				break;
 			default: break;
 			}
 		}
@@ -1324,12 +1254,6 @@ comp_render_gfx_layers(struct render_gfx *render,
 			case XRT_LAYER_PROJECTION:
 			case XRT_LAYER_PROJECTION_DEPTH:
 				render_gfx_layer_projection(        //
-				    render,                         //
-				    state->premultiplied_alphas[i], //
-				    state->descriptor_sets[i]);     //
-				break;
-			case XRT_LAYER_QUAD:
-				render_gfx_layer_quad(              //
 				    render,                         //
 				    state->premultiplied_alphas[i], //
 				    state->descriptor_sets[i]);     //
@@ -1426,7 +1350,7 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 		uint32_t squash_count = 0;
 		uint32_t quad_count = 0;
 		for (uint32_t i = 0; i < layer_count; i++) {
-			if (debug_get_bool_option_quad_direct() && layers[i].data.type == XRT_LAYER_QUAD) {
+			if (layers[i].data.type == XRT_LAYER_QUAD) {
 				quads[quad_count++] = layers[i];
 			} else {
 				squashed[squash_count++] = layers[i];

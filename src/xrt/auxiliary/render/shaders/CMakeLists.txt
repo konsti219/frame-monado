@@ -27,8 +27,6 @@ set(SHADERS
     layer_equirect2.vert
     layer_projection.vert
     layer_projection.frag
-    layer_quad.vert
-    layer_quad.frag
 	)
 
 #

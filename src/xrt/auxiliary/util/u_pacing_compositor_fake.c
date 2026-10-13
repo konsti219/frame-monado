@@ -43,12 +43,11 @@ DEBUG_GET_ONCE_FLOAT_OPTION(present_to_display_offset_ms, "U_PACING_COMP_PRESENT
 DEBUG_GET_ONCE_FLOAT_OPTION(min_comp_time_ms, "U_PACING_COMP_MIN_TIME_MS", 3.0f)
 DEBUG_GET_ONCE_FLOAT_OPTION(comp_time_fraction_percent, "U_PACING_COMP_TIME_FRACTION_PERCENT", 20.0f)
 DEBUG_GET_ONCE_BOOL_OPTION(live_stats, "U_PACING_LIVE_STATS", false)
-DEBUG_GET_ONCE_BOOL_OPTION(drain_late_frames, "U_PACING_COMP_DRAIN_LATE_FRAMES", false)
 DEBUG_GET_ONCE_BOOL_OPTION(adaptive_budget, "U_PACING_COMP_ADAPTIVE_BUDGET", false)
 // A frame whose GPU work ends closer than this to its vblank misses it (the commit follows ~0.5 ms later)
-#define DRAIN_LATE_NS (1 * U_TIME_1MS_IN_NS)
+#define LATE_FRAME_MARGIN_NS (1 * U_TIME_1MS_IN_NS)
 // The adaptive budget aims to end frames this long before the vblank
-#define DRAIN_TARGET_NS (5 * U_TIME_1MS_IN_NS / 2)
+#define FRAME_FINISH_MARGIN_NS (5 * U_TIME_1MS_IN_NS / 2)
 
 // We keep track of this number of frames.
 #define FRAME_COUNT 8
@@ -131,14 +130,9 @@ struct fake_timing
 	//! The amount of time that the application needs to render frame.
 	int64_t comp_time_ns;
 
-	/*!
-	 * Set when a frame's GPU work ended too close to its present time. Mesa's VK_KHR_display WSI commits a frame
-	 * only after the previous one flipped, so a late frame leaves the next one queued for a refresh, and every
-	 * later frame inherits that refresh of latency. Skipping one present slot drains the queue again.
-	 */
-	bool skip_next_slot, drain_late_frames, adaptive_budget;
+	bool adaptive_budget;
 	int64_t frame_peak_ns, min_comp_time_ns;
-	int64_t skipped, late, skip_log_ns;
+	int64_t late, stats_log_ns;
 	//! Worst parts of a frame within the log period: wake to submit (CPU), submit to GPU start, GPU
 	int64_t worst_cpu_ns, worst_queue_ns, worst_gpu_ns, worst_wake_ns;
 
@@ -318,20 +312,15 @@ pc_predict(struct u_pacing_compositor *upc,
 
 	int64_t frame_id = f->frame_id;
 	int64_t desired_present_time_ns = predict_next_frame_present_time(ft, now_ns);
-	if (ft->skip_next_slot) {
-		ft->skip_next_slot = false;
-		desired_present_time_ns += ft->frame_period_ns;
-		ft->skipped++;
-	}
-	if (now_ns - ft->skip_log_ns > (int64_t)U_TIME_1S_IN_NS * 10) {
-		if (ft->skip_log_ns && (ft->drain_late_frames || ft->adaptive_budget))
-			U_LOG_I("Pacer: %" PRId64 " late frames, %" PRId64 " skipped slots in 10 s, budget %.2f ms (peak frame "
+	if (now_ns - ft->stats_log_ns > (int64_t)U_TIME_1S_IN_NS * 10) {
+		if (ft->stats_log_ns && ft->adaptive_budget)
+			U_LOG_D("Pacer: %" PRId64 " late frames in 10 s, budget %.2f ms (peak frame "
 			        "%.2f ms; worst wake delay %.2f, CPU %.2f, wait for GPU %.2f, GPU %.2f ms)",
-			        ft->late, ft->skipped, ft->comp_time_ns / 1e6, ft->frame_peak_ns / 1e6, ft->worst_wake_ns / 1e6,
+			        ft->late, ft->comp_time_ns / 1e6, ft->frame_peak_ns / 1e6, ft->worst_wake_ns / 1e6,
 			        ft->worst_cpu_ns / 1e6, ft->worst_queue_ns / 1e6, ft->worst_gpu_ns / 1e6);
-		ft->skipped = ft->late = 0;
+		ft->late = 0;
 		ft->worst_cpu_ns = ft->worst_queue_ns = ft->worst_gpu_ns = ft->worst_wake_ns = 0;
-		ft->skip_log_ns = now_ns;
+		ft->stats_log_ns = now_ns;
 	}
 	int64_t predicted_display_time_ns = calc_display_time(ft, desired_present_time_ns);
 
@@ -432,9 +421,8 @@ pc_info_gpu(
 		}
 		if (f->predicted_present_time_ns && f->when_woke_ns) {
 			// The commit follows the GPU by about half a millisecond and has to land before the vblank
-			if (gpu_end_ns > f->predicted_present_time_ns - DRAIN_LATE_NS) {
+			if (gpu_end_ns > f->predicted_present_time_ns - LATE_FRAME_MARGIN_NS) {
 				ft->late++;
-				ft->skip_next_slot = ft->drain_late_frames;
 			}
 		}
 		if (ft->adaptive_budget && f->when_woke_ns) {
@@ -445,7 +433,7 @@ pc_info_gpu(
 			if (frame_ns > ft->frame_period_ns)
 				frame_ns = ft->frame_peak_ns;
 			ft->frame_peak_ns = frame_ns > ft->frame_peak_ns ? frame_ns : ft->frame_peak_ns - ft->frame_peak_ns / 1000;
-			int64_t budget_ns = ft->frame_peak_ns + DRAIN_TARGET_NS;
+			int64_t budget_ns = ft->frame_peak_ns + FRAME_FINISH_MARGIN_NS;
 			// Leave room to wake for the next vblank after the present wait returned at the previous one
 			int64_t max_ns = ft->frame_period_ns - 2 * U_TIME_1MS_IN_NS;
 			ft->comp_time_ns = budget_ns < ft->min_comp_time_ns ? ft->min_comp_time_ns
@@ -535,7 +523,6 @@ u_pc_fake_create(int64_t estimated_frame_period_ns, int64_t now_ns, struct u_pac
 	ft->base.update_present_offset = pc_update_present_offset;
 	ft->base.destroy = pc_destroy;
 	ft->frame_period_ns = estimated_frame_period_ns;
-	ft->drain_late_frames = debug_get_bool_option_drain_late_frames();
 	ft->adaptive_budget = debug_get_bool_option_adaptive_budget();
 
 	snprintf(ft->cpu.name, ARRAY_SIZE(ft->cpu.name), "cpu");

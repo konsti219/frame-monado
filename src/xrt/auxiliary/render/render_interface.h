@@ -98,7 +98,7 @@ extern "C" {
 #define RENDER_DISTORTION_IMAGES_SIZE (3 * XRT_MAX_VIEWS)
 #define RENDER_DISTORTION_IMAGES_COUNT(RENDER_RESOURCES) (3 * RENDER_RESOURCES->view_count)
 
-//! The binding that the layer projection and quad shader have their UBO on.
+//! The binding that the layer projection shader has its UBO on.
 #define RENDER_BINDING_LAYER_SHARED_UBO 0
 
 //! The binding that the shared layer fragment shader has its source on.
@@ -421,10 +421,10 @@ struct render_resources
 		{
 			struct
 			{
-				//! For projection and quad layer.
+				//! For projection layer.
 				VkDescriptorSetLayout descriptor_set_layout;
 
-				//! For projection and quad layer.
+				//! For projection layer.
 				VkPipelineLayout pipeline_layout;
 			} shared;
 		} layer;
@@ -757,8 +757,6 @@ struct render_gfx_render_pass
 		VkPipeline proj_premultiplied_alpha;
 		VkPipeline proj_unpremultiplied_alpha;
 
-		VkPipeline quad_premultiplied_alpha;
-		VkPipeline quad_unpremultiplied_alpha;
 	} layer;
 };
 
@@ -996,18 +994,6 @@ struct render_gfx_layer_projection_data
 	struct xrt_colour_rgba_f32 color_bias;
 };
 
-/*!
- * UBO data that is sent to the layer quad shader.
- *
- * @relates render_gfx
- */
-struct render_gfx_layer_quad_data
-{
-	struct xrt_normalized_rect post_transform;
-	struct xrt_matrix_4x4 mvp;
-	struct xrt_colour_rgba_f32 color_scale;
-	struct xrt_colour_rgba_f32 color_bias;
-};
 
 /*!
  * @name Preparation functions - first stage
@@ -1069,19 +1055,6 @@ render_gfx_layer_projection_alloc_and_write(struct render_gfx *render,
                                             VkSampler src_sampler,
                                             VkImageView src_image_view,
                                             VkDescriptorSet *out_descriptor_set);
-
-/*!
- * Allocate and write a UBO and descriptor_set to be used for quad layer
- * rendering, the content of @p data need to be valid at the time of the call.
- *
- * @public @memberof render_gfx
- */
-XRT_CHECK_RESULT VkResult
-render_gfx_layer_quad_alloc_and_write(struct render_gfx *render,
-                                      const struct render_gfx_layer_quad_data *data,
-                                      VkSampler src_sampler,
-                                      VkImageView src_image_view,
-                                      VkDescriptorSet *out_descriptor_set);
 
 
 /*!
@@ -1207,16 +1180,6 @@ render_gfx_layer_equirect2(struct render_gfx *render, bool premultiplied_alpha, 
 void
 render_gfx_layer_projection(struct render_gfx *render, bool premultiplied_alpha, VkDescriptorSet descriptor_set);
 
-/*!
- * Dispatch a quad layer shader into the current target and view.
- *
- * Must have successfully called @ref render_gfx_layer_quad_alloc_and_write
- * before @ref render_gfx_begin_target to allocate @p descriptor_set and UBO.
- *
- * @public @memberof render_gfx
- */
-void
-render_gfx_layer_quad(struct render_gfx *render, bool premultiplied_alpha, VkDescriptorSet descriptor_set);
 
 /*!
  * @}
@@ -1544,7 +1507,6 @@ render_compute_clear(struct render_compute *render,
                      VkImageView target_image_view,
                      VkImageLayout target_final_layout,
                      const struct render_viewport_data views[XRT_MAX_VIEWS]);
-
 
 
 /*!

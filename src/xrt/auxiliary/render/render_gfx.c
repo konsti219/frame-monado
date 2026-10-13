@@ -889,32 +889,6 @@ render_gfx_render_pass_init(struct render_gfx_render_pass *rgrp,
 	VK_NAME_PIPELINE(vk, rgrp->layer.proj_unpremultiplied_alpha,
 	                 "render_gfx_render_pass projection unpremultiplied alpha");
 
-	// Quad
-	ret = create_layer_pipeline(                //
-	    vk,                                     //
-	    rgrp->render_pass,                      //
-	    r->gfx.layer.shared.pipeline_layout,    //
-	    r->pipeline_cache,                      //
-	    blend_factor_premultiplied_alpha,       // src_blend_factor
-	    r->shaders->layer_quad_vert,            // module_vert
-	    r->shaders->layer_quad_frag,            // module_frag
-	    &rgrp->layer.quad_premultiplied_alpha); // out_pipeline
-	VK_CHK_WITH_RET(ret, "create_layer_pipeline", false);
-	VK_NAME_PIPELINE(vk, rgrp->layer.quad_premultiplied_alpha, "render_gfx_render_pass quad premultiplied alpha");
-
-	ret = create_layer_pipeline(                  //
-	    vk,                                       //
-	    rgrp->render_pass,                        //
-	    r->gfx.layer.shared.pipeline_layout,      //
-	    r->pipeline_cache,                        //
-	    blend_factor_unpremultiplied_alpha,       // src_blend_factor
-	    r->shaders->layer_quad_vert,              // module_vert
-	    r->shaders->layer_quad_frag,              // module_frag
-	    &rgrp->layer.quad_unpremultiplied_alpha); // out_pipeline
-	VK_CHK_WITH_RET(ret, "create_layer_pipeline", false);
-	VK_NAME_PIPELINE(vk, rgrp->layer.quad_unpremultiplied_alpha,
-	                 "render_gfx_render_pass quad unpremultiplied alpha");
-
 	// Set fields.
 	rgrp->r = r;
 	rgrp->format = format;
@@ -945,8 +919,6 @@ render_gfx_render_pass_fini(struct render_gfx_render_pass *rgrp)
 	D(Pipeline, rgrp->layer.equirect2_unpremultiplied_alpha);
 	D(Pipeline, rgrp->layer.proj_premultiplied_alpha);
 	D(Pipeline, rgrp->layer.proj_unpremultiplied_alpha);
-	D(Pipeline, rgrp->layer.quad_premultiplied_alpha);
-	D(Pipeline, rgrp->layer.quad_unpremultiplied_alpha);
 
 	U_ZERO(rgrp);
 }
@@ -1424,27 +1396,6 @@ render_gfx_layer_projection_alloc_and_write(struct render_gfx *render,
 	    out_descriptor_set);                       //
 }
 
-XRT_CHECK_RESULT VkResult
-render_gfx_layer_quad_alloc_and_write(struct render_gfx *render,
-                                      const struct render_gfx_layer_quad_data *data,
-                                      VkSampler src_sampler,
-                                      VkImageView src_image_view,
-                                      VkDescriptorSet *out_descriptor_set)
-{
-	struct render_resources *r = render->r;
-
-	return do_ubo_and_src_alloc_and_write(         //
-	    render,                                    //
-	    RENDER_BINDING_LAYER_SHARED_UBO,           // ubo_binding
-	    data,                                      // ubo_ptr
-	    sizeof(*data),                             // ubo_size
-	    RENDER_BINDING_LAYER_SHARED_SRC,           // src_binding
-	    src_sampler,                               //
-	    src_image_view,                            //
-	    r->gfx.ubo_and_src_descriptor_pool,        //
-	    r->gfx.layer.shared.descriptor_set_layout, //
-	    out_descriptor_set);                       //
-}
 
 void
 render_gfx_layer_cylinder(struct render_gfx *render, bool premultiplied_alpha, VkDescriptorSet descriptor_set)
@@ -1493,22 +1444,6 @@ render_gfx_layer_projection(struct render_gfx *render, bool premultiplied_alpha,
 	    premultiplied_alpha                                        //
 	        ? render->rtr->rgrp->layer.proj_premultiplied_alpha    //
 	        : render->rtr->rgrp->layer.proj_unpremultiplied_alpha; //
-
-	// Hardcoded to 4 vertices.
-	dispatch_no_vbo(     //
-	    render,          //
-	    4,               // vertex_count
-	    pipeline,        //
-	    descriptor_set); //
-}
-
-void
-render_gfx_layer_quad(struct render_gfx *render, bool premultiplied_alpha, VkDescriptorSet descriptor_set)
-{
-	VkPipeline pipeline =                                          //
-	    premultiplied_alpha                                        //
-	        ? render->rtr->rgrp->layer.quad_premultiplied_alpha    //
-	        : render->rtr->rgrp->layer.quad_unpremultiplied_alpha; //
 
 	// Hardcoded to 4 vertices.
 	dispatch_no_vbo(     //

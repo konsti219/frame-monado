@@ -18,13 +18,8 @@
 #include "vk/vk_mini_helpers.h"
 
 #include "render/render_interface.h"
-#include "util/u_debug.h"
 #include "math/m_mathinclude.h"
 
-// Max anisotropy of the quad layer sampler, SteamVR uses 16.
-DEBUG_GET_ONCE_NUM_OPTION(quad_aniso, "SF_QUAD_ANISO", 16)
-// Mip LOD bias of the quad layer sampler, SteamVR's distort_geom_simplified_ps gets -0.2 (its UBO, traced).
-DEBUG_GET_ONCE_FLOAT_OPTION(quad_lod_bias, "SF_QUAD_LOD_BIAS", -0.2f)
 
 #include "cache/render_compute_pipeline_cache.h"
 #include "cache/render_shader_specialization_helpers.h"
@@ -581,9 +576,9 @@ render_resources_init(struct render_resources *r,
 	    .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 	    .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 	    .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-	    .anisotropyEnable = vk->features.sampler_anisotropy && debug_get_num_option_quad_aniso() > 1,
-	    .maxAnisotropy = (float)debug_get_num_option_quad_aniso(),
-	    .mipLodBias = debug_get_float_option_quad_lod_bias(),
+	    .anisotropyEnable = vk->features.sampler_anisotropy,
+	    .maxAnisotropy = 16.0f,
+	    .mipLodBias = -0.2f,
 	    .maxLod = VK_LOD_CLAMP_NONE,
 	    .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
 	};
