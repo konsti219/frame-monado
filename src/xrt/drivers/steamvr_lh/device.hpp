@@ -113,7 +113,6 @@ protected:
 	std::unordered_map<vr::ETrackedDeviceProperty, Property> properties;
 	std::unordered_map<std::string_view, xrt_input *> inputs_map;
 	std::vector<xrt_input> inputs_vec;
-	inline static xrt_pose chaperone = XRT_POSE_IDENTITY;
 	const InputClass *input_class{nullptr};
 	std::string manufacturer;
 	std::string model;
@@ -135,9 +134,6 @@ protected:
 
 private:
 	vr::ITrackedDeviceServerDriver *driver;
-
-	void
-	init_chaperone(const std::string &steam_install);
 };
 
 struct VivePro2Data

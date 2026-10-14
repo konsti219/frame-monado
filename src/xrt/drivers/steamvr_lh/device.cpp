@@ -24,7 +24,6 @@
 #include "util/u_device_id.h"
 #include "util/u_hand_tracking.h"
 #include "util/u_logging.h"
-#include "util/u_json.hpp"
 
 #include "util/u_time.h"
 #include "xrt/xrt_defines.h"
@@ -548,8 +547,6 @@ Device::Device(const DeviceBuilder &builder) : xrt_device({}), ctx(builder.ctx),
 
 		delete dev;
 	};
-
-	init_chaperone(builder.steam_install);
 }
 
 // NOTE: No operations that would force inputs_vec or finger_inputs_vec to reallocate (such as insertion)
@@ -673,7 +670,6 @@ palm_offset_index(xrt_hand hand)
 
 	return {};
 }
-
 } // namespace
 
 void
@@ -976,7 +972,7 @@ Device::get_pose(uint64_t at_timestamp_ns, xrt_space_relation *out_relation)
 			max_ahead = last_ns ? std::max(max_ahead, ahead) : ahead;
 			min_ahead = last_ns ? std::min(min_ahead, ahead) : ahead;
 		}
-		int64_t now_ns = chrono_timestamp_ns();
+		int64_t now_ns = os_monotonic_get_ns();
 		if (now_ns - last_ns > 1000000000) {
 			if (last_ns)
 				U_LOG_I("[pose] %s: queried %.1f..%.1f ms past the newest pose", serial, min_ahead / 1e6,
@@ -1413,74 +1409,6 @@ copy_pose(const vr::HmdQuaternion_t &orientation, const double (&position)[3])
 }
 } // namespace
 
-void
-Device::init_chaperone(const std::string &steam_install)
-{
-	static bool initialized = false;
-	if (initialized)
-		return;
-
-	initialized = true;
-
-	// Lighthouse driver seems to create a lighthousedb.json and a chaperone_info.vrchap (which is json)
-	// We will use the known_universes from the lighthousedb.json to match to a universe from chaperone_info.vrchap
-
-	using xrt::auxiliary::util::json::JSONNode;
-	auto lighthousedb = JSONNode::loadFromFile(steam_install + "/config/lighthouse/lighthousedb.json");
-	if (lighthousedb.isInvalid()) {
-		DEV_ERR("Couldn't load lighthousedb file, playspace center will be off - was Room Setup run?");
-		return;
-	}
-	auto chap_info = JSONNode::loadFromFile(steam_install + "/config/chaperone_info.vrchap");
-	if (chap_info.isInvalid()) {
-		DEV_ERR("Couldn't load chaperone info, playspace center will be off - was Room Setup run?");
-		return;
-	}
-
-	JSONNode info = {};
-	bool universe_found = false;
-
-	// XXX: This may be broken if there are multiple known universes - how do we determine which to use then?
-	auto known_universes = lighthousedb["known_universes"].asArray();
-	for (auto &universe : known_universes) {
-		const std::string id = universe["id"].asString();
-		for (const JSONNode &u : chap_info["universes"].asArray()) {
-			if (u["universeID"].asString() == id) {
-				DEV_INFO("Found info for universe %s", id.c_str());
-				info = u;
-				universe_found = true;
-				break;
-			}
-		}
-		if (universe_found) {
-			break;
-		}
-	}
-
-	if (info.isInvalid()) {
-		DEV_ERR("Couldn't find chaperone info for any known universe, playspace center will be off");
-		return;
-	}
-
-	std::vector<JSONNode> translation_arr = info["standing"]["translation"].asArray();
-
-	// If the array is missing elements, add zero.
-	for (size_t i = translation_arr.size(); i < 3; i++) {
-		translation_arr.push_back(JSONNode("0.0"));
-	}
-
-	const double yaw = info["standing"]["yaw"].asDouble();
-	const xrt_vec3 yaw_axis{0.0, -1.0, 0.0};
-	math_quat_from_angle_vector(static_cast<float>(yaw), &yaw_axis, &chaperone.orientation);
-	chaperone.position = copy_vec3({
-	    translation_arr[0].asDouble(),
-	    translation_arr[1].asDouble(),
-	    translation_arr[2].asDouble(),
-	});
-	math_quat_rotate_vec3(&chaperone.orientation, &chaperone.position, &chaperone.position);
-	DEV_INFO("Initialized chaperone data.");
-}
-
 inline xrt_space_relation_flags
 operator|(xrt_space_relation_flags a, xrt_space_relation_flags b)
 {
@@ -1553,11 +1481,6 @@ Device::update_pose(const vr::DriverPose_t &newPose) const
 	math_pose_transform(&world, &relation.pose, &relation.pose);
 	math_quat_rotate_vec3(&world.orientation, &relation.linear_velocity, &relation.linear_velocity);
 	math_quat_rotate_vec3(&world.orientation, &relation.angular_velocity, &relation.angular_velocity);
-
-	// apply chaperone transform
-	math_pose_transform(&chaperone, &relation.pose, &relation.pose);
-	math_quat_rotate_vec3(&chaperone.orientation, &relation.linear_velocity, &relation.linear_velocity);
-	math_quat_rotate_vec3(&chaperone.orientation, &relation.angular_velocity, &relation.angular_velocity);
 
 	const int64_t now_ns = os_monotonic_get_ns();
 	const int64_t ts = now_ns + time_s_to_ns(newPose.poseTimeOffset);

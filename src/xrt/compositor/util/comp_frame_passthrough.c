@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <linux/dma-buf.h>
 #include <math.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,6 +81,14 @@ struct pt_mesh
 	float focal, cx, cy;
 	float mesh_from_world[12]; // 3x4 rows
 	bool valid, logged;
+	float *vertices, *floor_points, *floor_vertices, *floor_pending_vertices;
+	pthread_t floor_thread;
+	pthread_mutex_t floor_mutex;
+	pthread_cond_t floor_condition;
+	bool floor_started, floor_running, floor_pending;
+	float floor_pending_pose[12];
+	double floor_pending_time;
+	double floor_sample_time, floor_log_time;
 };
 
 struct sf_comp_passthrough
@@ -790,6 +799,8 @@ half_from_float(float value)
 	return sign | ((exponent - 112) << 10) | (mantissa >> 13);
 }
 
+static void *floor_worker(void *data);
+
 // Grid size from the layout's first triangle (0, width, 1) and highest index
 static bool
 mesh_layout(struct pt_mesh *m)
@@ -811,9 +822,188 @@ mesh_layout(struct pt_mesh *m)
 	uint32_t width = indices[1];
 	if (width < 2 || width > 1024 || (highest + 1) % width || (highest + 1) / width < 2)
 		return false;
+	uint32_t height = (highest + 1) / width;
+	if (height > 1024)
+		return false;
+	float *vertices = calloc((size_t)width * height, 3 * sizeof(float));
+	float *points = calloc((size_t)width * height, 4 * sizeof(float));
+	if (!vertices || !points) {
+		free(vertices);
+		free(points);
+		return false;
+	}
 	m->width = width;
-	m->height = (highest + 1) / width;
+	m->height = height;
+	m->vertices = vertices;
+	m->floor_points = points;
+	m->floor_vertices = calloc((size_t)width * height, 3 * sizeof(float));
+	m->floor_pending_vertices = calloc((size_t)width * height, 3 * sizeof(float));
+	if (m->floor_vertices && m->floor_pending_vertices) {
+		pthread_mutex_init(&m->floor_mutex, NULL);
+		pthread_cond_init(&m->floor_condition, NULL);
+		m->floor_running = true;
+		m->floor_started = pthread_create(&m->floor_thread, NULL, floor_worker, m) == 0;
+		if (!m->floor_started) {
+			pthread_cond_destroy(&m->floor_condition);
+			pthread_mutex_destroy(&m->floor_mutex);
+		}
+	}
 	return true;
+}
+
+#define SF_FLOOR_BINS 80
+#define SF_FLOOR_BIN_M 0.03f
+
+static void
+floor_estimate(struct pt_mesh *m, const float pose[12], double now)
+{
+	uint64_t floor_start = os_monotonic_get_ns();
+	const uint32_t count = m->width * m->height;
+	for (uint32_t i = 0; i < count; i++) {
+		const float *v = &m->floor_vertices[i * 3];
+		float *p = &m->floor_points[i * 4];
+		for (int r = 0; r < 3; r++)
+			p[r] = pose[r * 4] * v[0] + pose[r * 4 + 1] * v[1] + pose[r * 4 + 2] * v[2] + pose[r * 4 + 3];
+		p[3] = 0;
+		if (v[2] < 0.05f || v[2] > 8 || !isfinite(p[0]) || !isfinite(p[1]) || !isfinite(p[2]))
+			p[0] = p[1] = p[2] = NAN;
+	}
+	for (uint32_t y = 0; y + 1 < m->height; y++) {
+		for (uint32_t x = 0; x + 1 < m->width; x++) {
+			uint32_t i = y * m->width + x;
+			float *p = &m->floor_points[i * 4];
+			const float *right = &m->floor_points[(i + 1) * 4],
+			            *down = &m->floor_points[(i + m->width) * 4];
+			struct xrt_vec3 a = {right[0] - p[0], right[1] - p[1], right[2] - p[2]};
+			struct xrt_vec3 b = {down[0] - p[0], down[1] - p[1], down[2] - p[2]};
+			float nx = a.y * b.z - a.z * b.y, ny = a.z * b.x - a.x * b.z, nz = a.x * b.y - a.y * b.x;
+			float norm = sqrtf(nx * nx + ny * ny + nz * nz);
+			p[3] = norm > 1e-6f && fabsf(ny) / norm > 0.96f;
+		}
+	}
+	unsigned support[SF_FLOOR_BINS] = {0};
+	float sum[SF_FLOOR_BINS] = {0}, min_x[SF_FLOOR_BINS], max_x[SF_FLOOR_BINS];
+	float min_z[SF_FLOOR_BINS], max_z[SF_FLOOR_BINS];
+	for (int b = 0; b < SF_FLOOR_BINS; b++) {
+		min_x[b] = min_z[b] = INFINITY;
+		max_x[b] = max_z[b] = -INFINITY;
+	}
+	for (uint32_t i = 0; i < count; i++) {
+		const float *p = &m->floor_points[i * 4];
+		float below = pose[7] - p[1];
+		if (!p[3] || !isfinite(below) || below < 0.5f || below > 2.9f ||
+		    hypotf(p[0] - pose[3], p[2] - pose[11]) > 2.5f)
+			continue;
+		int centre = (int)((below - 0.5f) / SF_FLOOR_BIN_M);
+		for (int b = centre - 1; b <= centre + 1; b++) {
+			if (b < 0 || b >= SF_FLOOR_BINS)
+				continue;
+			support[b]++;
+			sum[b] += p[1];
+			min_x[b] = fminf(min_x[b], p[0]);
+			max_x[b] = fmaxf(max_x[b], p[0]);
+			min_z[b] = fminf(min_z[b], p[2]);
+			max_z[b] = fmaxf(max_z[b], p[2]);
+		}
+	}
+	bool eligible[SF_FLOOR_BINS];
+	unsigned strongest = 0;
+	for (int b = 0; b < SF_FLOOR_BINS; b++) {
+		eligible[b] = support[b] >= 30 && max_x[b] - min_x[b] >= 0.25f && max_z[b] - min_z[b] >= 0.25f;
+		if (eligible[b] && support[b] > strongest)
+			strongest = support[b];
+	}
+	int best = -1;
+	// Choose the density peak of the lowest substantial surface, rather than its noisy lower edge.
+	for (int b = SF_FLOOR_BINS - 1; b >= 0; b--) {
+		if (!eligible[b] || support[b] * 5 < strongest) {
+			if (best >= 0)
+				break;
+			continue;
+		}
+		if (best < 0 || support[b] > support[best])
+			best = b;
+	}
+	float height = best < 0 ? NAN : sum[best] / support[best];
+	char path[512], temporary[520];
+	const char *runtime = getenv("XDG_RUNTIME_DIR");
+	if (!runtime || snprintf(path, sizeof(path), "%s/frame-shell-floor", runtime) >= (int)sizeof(path))
+		return;
+	snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+	FILE *file = fopen(temporary, "w");
+	if (!file)
+		return;
+	fprintf(file, "1 %lu %.5f %u\n", (unsigned long)os_monotonic_get_ns(), height, best < 0 ? 0 : support[best]);
+	uint32_t selected_count = 0;
+	for (uint32_t i = 0; i < count; i++) {
+		const float *p = &m->floor_points[i * 4];
+		if (p[3] && fabsf(p[1] - height) < 0.06f)
+			selected_count++;
+	}
+	uint32_t selected_step = (selected_count + 127) / 128, selected_seen = 0;
+	for (uint32_t i = 0; i < count && selected_count; i++) {
+		const float *p = &m->floor_points[i * 4];
+		if (p[3] && fabsf(p[1] - height) < 0.06f && selected_seen++ % selected_step == 0)
+			fprintf(file, "%.4f %.4f %.4f 1\n", p[0], p[1], p[2]);
+	}
+	uint32_t step_x = (m->width + 11) / 12, step_y = (m->height + 9) / 10;
+	for (uint32_t y = 0; y < m->height; y += step_y) {
+		for (uint32_t x = 0; x < m->width; x += step_x) {
+			const float *p = &m->floor_points[(y * m->width + x) * 4];
+			if (isfinite(p[0]))
+				fprintf(file, "%.4f %.4f %.4f %.0f\n", p[0], p[1], p[2], p[3]);
+		}
+	}
+	if (fclose(file) == 0)
+		rename(temporary, path);
+	if (now - m->floor_log_time > 2) {
+		U_LOG_I("Mesh floor prototype: height %.3f m raw, support %u, span %.2f x %.2f m, CPU %.3f ms", height,
+		        best < 0 ? 0 : support[best], best < 0 ? 0 : max_x[best] - min_x[best],
+		        best < 0 ? 0 : max_z[best] - min_z[best], (os_monotonic_get_ns() - floor_start) * 1e-6);
+		m->floor_log_time = now;
+	}
+}
+
+static void *
+floor_worker(void *data)
+{
+	struct pt_mesh *m = data;
+	struct sched_param priority = {0};
+	pthread_setschedparam(pthread_self(), SCHED_OTHER, &priority);
+	pthread_mutex_lock(&m->floor_mutex);
+	while (m->floor_running) {
+		while (!m->floor_pending && m->floor_running)
+			pthread_cond_wait(&m->floor_condition, &m->floor_mutex);
+		if (!m->floor_running)
+			break;
+		float *vertices = m->floor_vertices;
+		m->floor_vertices = m->floor_pending_vertices;
+		m->floor_pending_vertices = vertices;
+		float pose[12];
+		memcpy(pose, m->floor_pending_pose, sizeof(pose));
+		double now = m->floor_pending_time;
+		m->floor_pending = false;
+		pthread_mutex_unlock(&m->floor_mutex);
+		floor_estimate(m, pose, now);
+		pthread_mutex_lock(&m->floor_mutex);
+	}
+	pthread_mutex_unlock(&m->floor_mutex);
+	return NULL;
+}
+
+static void
+floor_schedule(struct pt_mesh *m, const float pose[12], double now)
+{
+	if (!m->floor_started || now - m->floor_sample_time < 0.2)
+		return;
+	m->floor_sample_time = now;
+	pthread_mutex_lock(&m->floor_mutex);
+	memcpy(m->floor_pending_vertices, m->vertices, (size_t)m->width * m->height * 3 * sizeof(float));
+	memcpy(m->floor_pending_pose, pose, sizeof(m->floor_pending_pose));
+	m->floor_pending_time = now;
+	m->floor_pending = true;
+	pthread_cond_signal(&m->floor_condition);
+	pthread_mutex_unlock(&m->floor_mutex);
 }
 
 static void
@@ -824,9 +1014,10 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 	clock_gettime(CLOCK_MONOTONIC_RAW, &raw);
 	double now = raw.tv_sec + raw.tv_nsec * 1e-9;
 	m->valid = m->valid && now - m->time < SF_MESH_MAX_AGE_S;
-	if (!pt->mesh_enabled || !queue_open(&m->data, SF_MESH_DATA_PATH) || !queue_open(&m->layout, SF_MESH_LAYOUT_PATH))
+	if (!pt->mesh_enabled || !queue_open(&m->data, SF_MESH_DATA_PATH) ||
+	    !queue_open(&m->layout, SF_MESH_LAYOUT_PATH))
 		return;
-	if (!m->width && !mesh_layout(m))
+	if (!m->vertices && !mesh_layout(m))
 		return;
 	uint32_t header_size, data_size, index;
 	uint64_t seq;
@@ -843,7 +1034,8 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 		return;
 	// The vertices lie on the rays of a pinhole grid (x/z linear in the column, y/z in the row): fit it while
 	// copying out the depths
-	const float *v = (const float *)(block + header_size);
+	memcpy(m->vertices, block + header_size, (size_t)vertices * 3 * sizeof(float));
+	const float *v = m->vertices;
 	double n = 0, sg[2] = {0}, sgg[2] = {0}, sa[2] = {0}, sga[2] = {0};
 	for (uint32_t i = 0; i < vertices; i++) {
 		float z = v[i * 3 + 2];
@@ -876,6 +1068,7 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 	}
 	if (!isfinite(focal[0]) || !isfinite(focal[1]) || focal[0] <= 0 || fabs(focal[0] / focal[1] - 1) > 0.02)
 		return;
+	floor_schedule(m, pose_copy, now);
 	texture_upload(pt, &m->depth, cmd, VK_NULL_HANDLE, 0, 0);
 	m->focal = (focal[0] + focal[1]) / 2;
 	m->cx = centre[0];
@@ -1283,9 +1476,23 @@ sf_comp_passthrough_destroy(struct sf_comp_passthrough **ptr)
 	if (pt->shm)
 		munmap(pt->shm, sizeof(*pt->shm));
 	texture_destroy(pt, &pt->mesh.depth);
+	if (pt->mesh.floor_started) {
+		pthread_mutex_lock(&pt->mesh.floor_mutex);
+		pt->mesh.floor_running = false;
+		pthread_cond_signal(&pt->mesh.floor_condition);
+		pthread_mutex_unlock(&pt->mesh.floor_mutex);
+		pthread_join(pt->mesh.floor_thread, NULL);
+		pthread_cond_destroy(&pt->mesh.floor_condition);
+		pthread_mutex_destroy(&pt->mesh.floor_mutex);
+	}
+	free(pt->mesh.floor_vertices);
+	free(pt->mesh.floor_pending_vertices);
+	free(pt->mesh.vertices);
+	free(pt->mesh.floor_points);
 	queue_close(&pt->mesh.data);
 	queue_close(&pt->mesh.layout);
-	if (pt->pose_trace) fclose(pt->pose_trace);
+	if (pt->pose_trace)
+		fclose(pt->pose_trace);
 	free(pt);
 	*ptr = NULL;
 }

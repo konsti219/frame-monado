@@ -1100,8 +1100,13 @@ crg_distortion_common(struct render_gfx *render,
 		    do_timewarp);          //
 
 		if (md->projection != NULL) {
-			render_gfx_mesh_projection_draw(render, i, projection_sets[i], do_timewarp,
-			                                !is_layer_unpremultiplied(&md->projection->data));
+			// Without source alpha the layer is opaque (the plain mesh shader writes alpha 1)
+			if (md->projection->data.flags & XRT_LAYER_COMPOSITION_BLEND_TEXTURE_SOURCE_ALPHA_BIT) {
+				render_gfx_mesh_projection_draw(render, i, projection_sets[i], do_timewarp,
+				                                !is_layer_unpremultiplied(&md->projection->data));
+			} else {
+				render_gfx_mesh_draw(render, i, projection_sets[i], do_timewarp);
+			}
 		}
 		for (uint32_t q = 0; q < md->quad_count; q++) {
 			if (quad_sets[i][q] == VK_NULL_HANDLE || quad_scissors[i][q].w == 0) {

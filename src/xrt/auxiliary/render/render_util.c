@@ -164,17 +164,19 @@ struct timewarp_params
 	double far;           //!< m, fixation beyond counts as infinitely far (no correction), 0 = never
 	double max_shift;     //!< m, largest translation corrected
 	double smoothing;     //!< s, time constant of the depth
-	double fixed_depth;   //!< m, SF_TIMEWARP_DEPTH, 0 = follow the eyes
+	double fixed_depth;   //!< m, SF_TIMEWARP_DEPTH (0 = rotation only), NAN = follow the eyes
 };
 
 static const struct timewarp_params *
 timewarp_params(void)
 {
-	static struct timewarp_params params = {1.0, 0.6, 0.0, 0.02, 0.05, -1.0};
+	static struct timewarp_params params = {1.0, 0.6, 0.0, 0.02, 0.05, NAN};
+	static bool env_read;
 	static uint64_t next_read_ns;
-	if (params.fixed_depth < 0.0) {
+	if (!env_read) {
 		const char *env = getenv("SF_TIMEWARP_DEPTH");
-		params.fixed_depth = env != NULL ? atof(env) : 0.0;
+		params.fixed_depth = env != NULL ? atof(env) : NAN;
+		env_read = true;
 	}
 	uint64_t now = os_monotonic_get_ns();
 	if (now < next_read_ns) {
@@ -218,7 +220,9 @@ timewarp_inverse_depth(const struct timewarp_params *params)
 	static uint64_t last_ns;
 
 	double target = 0.0;
-	if (params->fixed_depth > 0.0) {
+	if (params->fixed_depth <= 0.0) {
+		return 0.0;
+	} else if (params->fixed_depth > 0.0) {
 		target = 1.0 / params->fixed_depth;
 	} else {
 		uint64_t updated = __atomic_load_n(&fixation_updated_ns, __ATOMIC_RELAXED);
