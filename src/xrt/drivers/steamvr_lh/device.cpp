@@ -40,7 +40,9 @@
 #include "device.hpp"
 #include "eye_gaze.hpp"
 
+#include <cerrno>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <chrono>
 #include <cstring>
@@ -443,6 +445,15 @@ HmdDevice::HmdDevice(const DeviceBuilder &builder) : Device(builder)
 
 	// Refined once lighthouse gives us the model number, see handle_property_write.
 	set_hmd_class(fallback_hmd_class());
+
+	if (const char *path = getenv("STEAMVR_LH_BACKLIGHT"); path != nullptr && *path != '\0') {
+		this->backlight_path = path;
+	}
+	if (const char *path = getenv("STEAMVR_LH_BATTERY"); path != nullptr && *path != '\0') {
+		this->battery_path = path;
+		this->xrt_device::get_battery_status =
+		    &device_bouncer<HmdDevice, &HmdDevice::get_battery_status, xrt_result_t>;
+	}
 
 #define SETUP_MEMBER_FUNC(name) this->xrt_device::name = &device_bouncer<HmdDevice, &HmdDevice::name, xrt_result_t>
 	SETUP_MEMBER_FUNC(update_inputs);
@@ -985,9 +996,51 @@ Device::get_battery_status(bool *out_present, bool *out_charging, float *out_cha
 	return XRT_SUCCESS;
 }
 
+namespace {
+//! First number in a sysfs attribute, or -1.
+long
+read_sysfs_number(const std::string &path)
+{
+	FILE *file = fopen(path.c_str(), "r");
+	if (file == nullptr) {
+		return -1;
+	}
+	long value = -1;
+	if (fscanf(file, "%ld", &value) != 1) {
+		value = -1;
+	}
+	fclose(file);
+	return value;
+}
+} // namespace
+
+xrt_result_t
+HmdDevice::get_battery_status(bool *out_present, bool *out_charging, float *out_charge)
+{
+	long capacity = read_sysfs_number(battery_path + "/capacity");
+	char status[32] = {};
+	if (FILE *file = fopen((battery_path + "/status").c_str(), "r"); file != nullptr) {
+		if (fgets(status, sizeof(status), file) == nullptr) {
+			status[0] = '\0';
+		}
+		fclose(file);
+	}
+	*out_present = capacity >= 0;
+	*out_charging = std::strncmp(status, "Charging", 8) == 0 || std::strncmp(status, "Full", 4) == 0;
+	*out_charge = capacity >= 0 ? std::clamp(capacity / 100.0f, 0.0f, 1.0f) : 0.0f;
+	return XRT_SUCCESS;
+}
+
 xrt_result_t
 HmdDevice::get_brightness(float *out_brightness)
 {
+	if (!backlight_path.empty()) {
+		long value = read_sysfs_number(backlight_path + "/brightness");
+		long max = read_sysfs_number(backlight_path + "/max_brightness");
+		if (value >= 0 && max > 0) {
+			this->brightness = (float)value / (float)max;
+		}
+	}
 	if (variant == VIVE_VARIANT_PRO2 && vp2.hid != nullptr) {
 		this->brightness = vp2_get_brightness(vp2.hid);
 	}
@@ -1011,6 +1064,24 @@ HmdDevice::set_brightness(float brightness, bool relative)
 
 		this->brightness = std::clamp(brightness, 0.0f, 1.3f);
 
+		return XRT_SUCCESS;
+	}
+
+	if (!backlight_path.empty()) {
+		long max = read_sysfs_number(backlight_path + "/max_brightness");
+		if (max <= 0) {
+			return XRT_ERROR_OUTPUT_REQUEST_FAILURE;
+		}
+		// 0..1 of the backlight range, never fully dark.
+		float target = std::clamp(relative ? this->brightness + brightness : brightness, 0.02f, 1.0f);
+		FILE *file = fopen((backlight_path + "/brightness").c_str(), "w");
+		if (file == nullptr) {
+			DEV_ERR("Cannot open %s/brightness: %s", backlight_path.c_str(), strerror(errno));
+			return XRT_ERROR_OUTPUT_REQUEST_FAILURE;
+		}
+		fprintf(file, "%ld\n", std::lround(target * (float)max));
+		fclose(file);
+		this->brightness = target;
 		return XRT_SUCCESS;
 	}
 

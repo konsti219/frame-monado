@@ -215,6 +215,8 @@ public:
 	get_brightness(float *out_brightness);
 	xrt_result_t
 	set_brightness(float brightness, bool relative);
+	xrt_result_t
+	get_battery_status(bool *out_present, bool *out_charging, float *out_charge);
 
 	xrt_result_t
 	get_compositor_info(const struct xrt_device_compositor_mode *mode, struct xrt_device_compositor_info *out_info);
@@ -241,6 +243,11 @@ private:
 	std::mutex hmd_parts_mut;
 	float brightness{1.0f};
 	AnalogGainRange analog_gain_range{};
+
+	//! Panel backlight and battery in sysfs (STEAMVR_LH_BACKLIGHT, STEAMVR_LH_BATTERY), for headsets whose
+	//! driver doesn't take brightness through settings or report its battery (the Steam Frame).
+	std::string backlight_path;
+	std::string battery_path;
 };
 
 class ControllerDevice : public Device
