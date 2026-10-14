@@ -19,6 +19,7 @@ set(SHADERS
     frame_passthrough.vert
     frame_passthrough.frag
     mesh.frag
+    mesh_projection.frag
     mesh_quad.frag
     mesh.vert
     layer_cylinder.frag

@@ -567,6 +567,18 @@ render_resources_init(struct render_resources *r,
 	VK_CHK_WITH_RET(ret, "vk_create_sampler", false);
 
 	VK_NAME_SAMPLER(vk, r->samplers.clamp_to_border_black, "render_resources sampler clamp_to_border_black");
+	VkSamplerCreateInfo transparent_sampler = {
+	    .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+	    .magFilter = VK_FILTER_LINEAR,
+	    .minFilter = VK_FILTER_LINEAR,
+	    .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+	    .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+	    .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+	    .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+	    .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+	};
+	ret = vk->vkCreateSampler(vk->device, &transparent_sampler, NULL, &r->samplers.clamp_to_border_transparent_black);
+	VK_CHK_WITH_RET(ret, "vkCreateSampler", false);
 
 	VkSamplerCreateInfo aniso_info = {
 	    .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -1117,6 +1129,7 @@ render_resources_fini(struct render_resources *r)
 	D(Sampler, r->samplers.repeat);
 	D(Sampler, r->samplers.clamp_to_edge);
 	D(Sampler, r->samplers.clamp_to_border_black);
+	D(Sampler, r->samplers.clamp_to_border_transparent_black);
 	D(Sampler, r->samplers.clamp_to_edge_aniso);
 
 	D(ImageView, r->mock.color.image_view);

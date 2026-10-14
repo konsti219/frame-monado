@@ -802,6 +802,11 @@ render_gfx_render_pass_init(struct render_gfx_render_pass *rgrp,
 			    &rgrp->mesh.quad_pipelines[tw][pm]); // out_mesh_pipeline
 			VK_CHK_WITH_RET(ret, "create_mesh_pipeline", false);
 			VK_NAME_PIPELINE(vk, rgrp->mesh.quad_pipelines[tw][pm], "render_gfx_render_pass mesh quad pipeline");
+			ret = create_mesh_pipeline(vk, rgrp->render_pass, r->mesh.pipeline_layout, r->pipeline_cache,
+			                           r->mesh.src_binding, r->mesh.index_count_total, r->mesh.stride,
+			                           &quad_params, &quad_blend, r->shaders->mesh_vert,
+			                           r->shaders->mesh_projection_frag, &rgrp->mesh.projection_pipelines[tw][pm]);
+			VK_CHK_WITH_RET(ret, "create_mesh_pipeline", false);
 		}
 	}
 
@@ -910,6 +915,7 @@ render_gfx_render_pass_fini(struct render_gfx_render_pass *rgrp)
 	for (uint32_t tw = 0; tw < 2; tw++) {
 		for (uint32_t pm = 0; pm < 2; pm++) {
 			D(Pipeline, rgrp->mesh.quad_pipelines[tw][pm]);
+			D(Pipeline, rgrp->mesh.projection_pipelines[tw][pm]);
 		}
 	}
 
@@ -1287,6 +1293,17 @@ render_gfx_mesh_draw(struct render_gfx *render, uint32_t mesh_index, VkDescripto
 	    do_timewarp ? render->rtr->rgrp->mesh.pipeline_timewarp : render->rtr->rgrp->mesh.pipeline;
 
 	mesh_draw_with_pipeline(render, mesh_index, descriptor_set, pipeline);
+}
+
+void
+render_gfx_mesh_projection_draw(struct render_gfx *render,
+                                uint32_t mesh_index,
+                                VkDescriptorSet descriptor_set,
+                                bool do_timewarp,
+                                bool premultiplied_alpha)
+{
+	mesh_draw_with_pipeline(render, mesh_index, descriptor_set,
+	                        render->rtr->rgrp->mesh.projection_pipelines[do_timewarp][premultiplied_alpha]);
 }
 
 XRT_CHECK_RESULT VkResult

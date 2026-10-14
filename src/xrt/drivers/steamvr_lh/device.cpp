@@ -684,7 +684,7 @@ ControllerDevice::set_skeleton(std::span<const vr::VRBoneTransform_t> bones,
 {
 	assert(bones.size() == eBone_Count);
 	generate_palm_pose_offset(bones, hand);
-	if (!is_simulated && debug_get_bool_option_lh_emulate_hand()) {
+	if ((!is_simulated || name == XRT_DEVICE_FRAME_CONTROLLER) && debug_get_bool_option_lh_emulate_hand()) {
 		assert(inputs_vec.capacity() >= inputs_vec.size() + 1);
 		const xrt_input_name tracker_name =
 		    (hand == XRT_HAND_RIGHT) ? XRT_INPUT_HT_CONFORMING_RIGHT : XRT_INPUT_HT_CONFORMING_LEFT;
@@ -933,7 +933,8 @@ ControllerDevice::get_hand_tracking(enum xrt_input_name name,
 
 		auto delta_before = desired_timestamp_ns - it_previous->timestamp;
 		auto delta_after = it->timestamp - desired_timestamp_ns;
-		float lerp_amt = (float)delta_before / (float)(delta_after - delta_before);
+		float lerp_amt = (float)delta_before / (float)(delta_after + delta_before);
+		out_value->is_active = it_previous->joint_set.is_active && it->joint_set.is_active;
 
 		auto interpolate = [lerp_amt](xrt_space_relation &previous, xrt_space_relation &next,
 		                              xrt_space_relation &out) {
@@ -2093,12 +2094,26 @@ public:
 		std::snprintf(str, sizeof(str), "Steam Frame %s controller", left ? "left" : "right");
 		set_input_class(&controller_classes.at("frame_controller"));
 		set_haptic_handle(0);
-		supported.hand_tracking = false;
+		const xrt_input_name hand_input = left ? XRT_INPUT_HT_CONFORMING_LEFT : XRT_INPUT_HT_CONFORMING_RIGHT;
+		inputs_vec.push_back({true, 0, hand_input, {}});
+		inputs = inputs_vec.data();
+		input_count = inputs_vec.size();
+		supported.hand_tracking = true;
 		supported.notify_chirality = false;
 		for (auto &input : inputs_vec) input.active = false;
 		update_inputs = [](xrt_device *xdev) -> xrt_result_t {
 			static_cast<FrameControllerProxy *>(xdev)->update_proxy_inputs();
 			return XRT_SUCCESS;
+		};
+		this->xrt_device::get_hand_tracking = [](xrt_device *xdev, xrt_input_name input_name,
+		                                       int64_t timestamp, xrt_hand_joint_set *joints,
+		                                       int64_t *out_timestamp) -> xrt_result_t {
+			auto *self = static_cast<FrameControllerProxy *>(xdev);
+			std::lock_guard lk(self->ctx->devices_mut);
+			auto *device = self->backend_locked();
+			*joints = {};
+			*out_timestamp = timestamp;
+			return device ? device->get_hand_tracking(input_name, timestamp, joints, out_timestamp) : XRT_SUCCESS;
 		};
 		this->xrt_device::set_output = [](xrt_device *xdev, xrt_output_name name, const xrt_output_value *value) -> xrt_result_t {
 			auto *self = static_cast<FrameControllerProxy *>(xdev);

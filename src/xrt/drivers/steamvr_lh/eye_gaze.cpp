@@ -11,6 +11,7 @@
 #include "os/os_time.h"
 #include "util/u_logging.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -38,7 +39,12 @@ constexpr size_t OFF_REQUESTED = 0x3c;
 // Within the packed record
 constexpr size_t REC_PRODUCER_STATE = 0x00;
 constexpr size_t REC_GAZE = 0x0d;      // float[2][3], left and right after fusion
+// Positional timewarp's depth, in the compositor (aux_render) when it is linked into the same process
+extern "C" __attribute__((weak)) void
+render_set_fixation_depth(float inverse_metres);
+
 constexpr size_t REC_FIXATION = 0x3d; // float[3], head-relative point in metres
+constexpr size_t REC_OPENNESS = 0x79; // float[2], left and right, 0..1
 
 //! Segment size and record offset per version: v4 on SteamOS 0.5.0, v5 since build 20260930
 bool
@@ -160,7 +166,7 @@ EyeGazeReader::run()
 			continue;
 		}
 		bool fresh = *sequence != seq;
-		uint8_t rec[0x80];
+		uint8_t rec[0xa0];
 		std::memcpy(rec, base + record, sizeof(rec));
 		pthread_mutex_unlock(mutex);
 
@@ -170,6 +176,20 @@ EyeGazeReader::run()
 
 		// The fixation point gives one combined gaze; fall back to the mean of both eyes
 		xrt_vec3 dir = read<xrt_vec3>(rec, REC_FIXATION);
+
+		// Its distance drives positional timewarp (as 1 / distance, which the correction is linear in; the compositor
+		// smooths it). The distance comes from the eyes' vergence, so it is only updated while both eyes are open; with
+		// one eye closed (or blinking) the last good value is kept.
+		bool both_open = read<float>(rec, REC_OPENNESS) > 0.5f && read<float>(rec, REC_OPENNESS + 4) > 0.5f;
+		if (both_open && dir.z < 0) {
+			float distance = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+			if (distance > 0.05f) {
+				inverse_depth = 1.0f / distance;
+			}
+		}
+		if (inverse_depth > 0 && render_set_fixation_depth != nullptr) {
+			render_set_fixation_depth(inverse_depth);
+		}
 		if (!normalize(&dir) || dir.z > 0) {
 			xrt_vec3 l = read<xrt_vec3>(rec, REC_GAZE);
 			xrt_vec3 r = read<xrt_vec3>(rec, REC_GAZE + 12);

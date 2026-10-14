@@ -145,6 +145,13 @@ render_calc_time_warp_projection(const struct xrt_fov *fov, struct xrt_matrix_4x
  * Calculates a timewarp matrix which takes in NDC coords and gives out results
  * in [-1, 1] space that needs a perspective divide.
  */
+/*!
+ * Where the eyes fixate, as 1 / distance in metres, for positional timewarp (see render_calc_time_warp_matrix).
+ * Called by the eye-tracking driver; values older than half a second are ignored.
+ */
+void
+render_set_fixation_depth(float inverse_metres);
+
 void
 render_calc_time_warp_matrix(const struct xrt_pose *src_pose,
                              const struct xrt_fov *src_fov,
@@ -398,6 +405,7 @@ struct render_resources
 
 		//! Sampler that clamps color samples to black in all directions.
 		VkSampler clamp_to_border_black;
+		VkSampler clamp_to_border_transparent_black;
 
 		//! Clamp to edge, 16x anisotropic (when supported): SteamVR's sampler for quad layers.
 		VkSampler clamp_to_edge_aniso;
@@ -744,6 +752,7 @@ struct render_gfx_render_pass
 
 		//! Quad layers drawn directly in the distortion pass, [timewarp][premultiplied].
 		VkPipeline quad_pipelines[2][2];
+		VkPipeline projection_pipelines[2][2];
 	} mesh;
 
 	struct
@@ -1129,6 +1138,13 @@ render_gfx_end_view(struct render_gfx *render);
  */
 void
 render_gfx_mesh_draw(struct render_gfx *render, uint32_t mesh_index, VkDescriptorSet descriptor_set, bool do_timewarp);
+
+void
+render_gfx_mesh_projection_draw(struct render_gfx *render,
+                                uint32_t mesh_index,
+                                VkDescriptorSet descriptor_set,
+                                bool do_timewarp,
+                                bool premultiplied_alpha);
 
 /*!
  * Allocate and write a UBO and descriptor set for a quad layer drawn in the distortion pass.

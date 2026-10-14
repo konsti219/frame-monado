@@ -1137,6 +1137,14 @@ sf_comp_passthrough_trace(struct sf_comp_passthrough *pt, const struct comp_rend
 		if (data->type == XRT_LAYER_QUAD)
 			trace_pose(pt->pose_trace, now, "quad", i, data->timestamp, &data->quad.pose, data->flags,
 			           data->quad.sub.image_index);
+		else if (data->type == XRT_LAYER_PROJECTION || data->type == XRT_LAYER_PROJECTION_DEPTH) {
+			for (uint32_t view = 0; view < d->target.view_count; view++) {
+				const struct xrt_layer_projection_view_data *v = data->type == XRT_LAYER_PROJECTION
+				    ? &data->proj.v[view] : &data->depth.v[view];
+				trace_pose(pt->pose_trace, now, "projection", view, data->timestamp, &v->pose, data->flags,
+				           v->sub.image_index);
+			}
+		}
 		else if (data->type == XRT_LAYER_CYLINDER)
 			trace_pose(pt->pose_trace, now, "cylinder", i, data->timestamp, &data->cylinder.pose, data->flags,
 			           data->cylinder.sub.image_index);

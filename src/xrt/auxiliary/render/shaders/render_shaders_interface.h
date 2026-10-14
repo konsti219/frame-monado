@@ -35,6 +35,7 @@ struct render_shaders
 	VkShaderModule mesh_vert;
 	VkShaderModule mesh_frag;
 	VkShaderModule mesh_quad_frag;
+	VkShaderModule mesh_projection_frag;
 
 
 	/*

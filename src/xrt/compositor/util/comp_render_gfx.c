@@ -107,6 +107,7 @@ struct gfx_mesh_view_data
 struct gfx_mesh_data
 {
 	struct gfx_mesh_view_data views[XRT_MAX_VIEWS];
+	const struct comp_layer *projection;
 
 	//! Quad and cylinder layers on top of everything else, drawn directly in the distortion pass.
 	const struct comp_layer *quads;
@@ -968,6 +969,52 @@ quad_direct_alloc_and_write(struct render_gfx *render,
 	    out_descriptor_set);                     //
 }
 
+static struct render_gfx_mesh_ubo_data
+mesh_ubo_data(const struct gfx_mesh_view_data *source,
+              const struct comp_render_dispatch_data *d,
+              uint32_t view,
+              bool do_timewarp)
+{
+	struct render_gfx_mesh_ubo_data data = {
+	    .vertex_rot = d->views[view].target.gfx.vertex_rot,
+	    .post_transform = source->src_norm_rect,
+	};
+	if (do_timewarp) {
+		data.pre_transform = d->views[view].pre_transform;
+		render_calc_time_warp_matrix(&source->src_pose, &source->src_fov,
+		                            &d->views[view].world_pose_scanout_begin, &data.transform_scanout_begin);
+		render_calc_time_warp_matrix(&source->src_pose, &source->src_fov,
+		                            &d->views[view].world_pose_scanout_end, &data.transform_scanout_end);
+	}
+	return data;
+}
+
+static void
+projection_mesh_views(struct render_gfx *render,
+                       const struct comp_layer *layer,
+                       uint32_t view_count,
+                       struct gfx_mesh_view_data views[XRT_MAX_VIEWS])
+{
+	bool alpha = (layer->data.flags & XRT_LAYER_COMPOSITION_BLEND_TEXTURE_SOURCE_ALPHA_BIT) != 0;
+	for (uint32_t i = 0; i < view_count; i++) {
+		const struct xrt_layer_projection_view_data *v = layer->data.type == XRT_LAYER_PROJECTION
+		    ? &layer->data.proj.v[i] : &layer->data.depth.v[i];
+		views[i] = (struct gfx_mesh_view_data){
+		    .src_pose = v->pose,
+		    .src_fov = v->fov,
+		    .src_norm_rect = v->sub.norm_rect,
+		    .src_sampler = alpha ? render->r->samplers.clamp_to_border_transparent_black
+		                         : render->r->samplers.clamp_to_border_black,
+		    .src_image_view = get_image_view(get_layer_image(layer, i, v->sub.image_index),
+		                                     layer->data.flags, v->sub.array_index),
+		};
+		if (layer->data.flip_y) {
+			views[i].src_norm_rect.y += views[i].src_norm_rect.h;
+			views[i].src_norm_rect.h = -views[i].src_norm_rect.h;
+		}
+	}
+}
+
 /// Used in both fast-path and layer-squashed routes
 static void
 crg_distortion_common(struct render_gfx *render,
@@ -985,32 +1032,17 @@ crg_distortion_common(struct render_gfx *render,
 	 */
 
 	struct gfx_mesh_state ms = XRT_STRUCT_INIT;
+	VkDescriptorSet projection_sets[XRT_MAX_VIEWS] = {0};
+	struct gfx_mesh_view_data projection_views[XRT_MAX_VIEWS];
+	if (md->projection != NULL) {
+		projection_mesh_views(render, md->projection, d->target.view_count, projection_views);
+	}
 	VkDescriptorSet quad_sets[XRT_MAX_VIEWS][RENDER_MAX_LAYERS] = {0};
 	render_scissor_data_t quad_scissors[XRT_MAX_VIEWS][RENDER_MAX_LAYERS];
 
 	for (uint32_t i = 0; i < d->target.view_count; i++) {
 
-		struct render_gfx_mesh_ubo_data data = {
-		    .vertex_rot = d->views[i].target.gfx.vertex_rot,
-		    .post_transform = md->views[i].src_norm_rect,
-		};
-
-		// Extra arguments for timewarp.
-		if (do_timewarp) {
-			data.pre_transform = d->views[i].pre_transform;
-
-			render_calc_time_warp_matrix(              //
-			    &md->views[i].src_pose,                //
-			    &md->views[i].src_fov,                 //
-			    &d->views[i].world_pose_scanout_begin, //
-			    &data.transform_scanout_begin);        //
-
-			render_calc_time_warp_matrix(            //
-			    &md->views[i].src_pose,              //
-			    &md->views[i].src_fov,               //
-			    &d->views[i].world_pose_scanout_end, //
-			    &data.transform_scanout_end);        //
-		}
+		struct render_gfx_mesh_ubo_data data = mesh_ubo_data(&md->views[i], d, i, do_timewarp);
 
 		ret = render_gfx_mesh_alloc_and_write( //
 		    render,                            //
@@ -1021,6 +1053,12 @@ crg_distortion_common(struct render_gfx *render,
 		VK_CHK_WITH_GOTO(ret, "render_gfx_mesh_alloc_and_write", err_no_memory);
 
 		VK_NAME_DESCRIPTOR_SET(vk, ms.descriptor_sets[i], "render_gfx mesh descriptor sets");
+		if (md->projection != NULL) {
+			struct render_gfx_mesh_ubo_data projection_data = mesh_ubo_data(&projection_views[i], d, i, do_timewarp);
+			ret = render_gfx_mesh_alloc_and_write(render, &projection_data, projection_views[i].src_sampler,
+			                                      projection_views[i].src_image_view, &projection_sets[i]);
+			VK_CHK_WITH_GOTO(ret, "render_gfx_mesh_alloc_and_write", err_no_memory);
+		}
 
 		for (uint32_t q = 0; q < md->quad_count; q++) {
 			const struct comp_layer *layer = &md->quads[q];
@@ -1061,6 +1099,10 @@ crg_distortion_common(struct render_gfx *render,
 		    ms.descriptor_sets[i], //
 		    do_timewarp);          //
 
+		if (md->projection != NULL) {
+			render_gfx_mesh_projection_draw(render, i, projection_sets[i], do_timewarp,
+			                                !is_layer_unpremultiplied(&md->projection->data));
+		}
 		for (uint32_t q = 0; q < md->quad_count; q++) {
 			if (quad_sets[i][q] == VK_NULL_HANDLE || quad_scissors[i][q].w == 0) {
 				continue;
@@ -1091,7 +1133,8 @@ static void
 crg_distortion_after_squash(struct render_gfx *render,
                             const struct comp_render_dispatch_data *d,
                             const struct comp_layer *quads,
-                            uint32_t quad_count)
+                            uint32_t quad_count,
+                            const struct comp_layer *projection)
 {
 
 	// Shared between all views.
@@ -1115,6 +1158,7 @@ crg_distortion_after_squash(struct render_gfx *render,
 	}
 	md.quads = quads;
 	md.quad_count = quad_count;
+	md.projection = projection;
 
 	// Per-frame mip chain copies of the quads' images, recorded before the distortion render pass.
 	const uint32_t levels = 3;
@@ -1221,7 +1265,6 @@ comp_render_gfx_layers(struct render_gfx *render,
 
 	struct gfx_layer_state ls = XRT_STRUCT_INIT;
 	sf_comp_passthrough_prepare(d->passthrough, render, d);
-	sf_comp_passthrough_trace(d->passthrough, d, layers, layer_count);
 
 	// Compute MVP matrices per eye: populates gfx_layer_view_state elements in `ls`
 	// from `comp_render_dispatch_data *d`
@@ -1321,6 +1364,7 @@ comp_render_gfx_layers(struct render_gfx *render,
 			default: break;
 			}
 		}
+
 	}
 
 
@@ -1471,6 +1515,22 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 				squashed[squash_count++] = layers[i];
 			}
 		}
+		const struct comp_layer *projection = NULL;
+		const uint32_t unsupported = XRT_LAYER_COMPOSITION_VIEW_SPACE_BIT |
+		    XRT_LAYER_COMPOSITION_COLOR_BIAS_SCALE | XRT_LAYER_COMPOSITION_ADVANCED_BLENDING_BIT |
+		    XRT_LAYER_COMPOSITION_DEPTH_TEST | XRT_LAYER_COMPOSITION_INVERTED_ALPHA_BIT;
+		if (squash_count == 1 &&
+		    (squashed[0].data.type == XRT_LAYER_PROJECTION || squashed[0].data.type == XRT_LAYER_PROJECTION_DEPTH) &&
+		    (squashed[0].data.flags & unsupported) == 0) {
+			projection = &squashed[0];
+			squash_count = 0;
+			static bool logged = false;
+			if (!logged) {
+				U_LOG_I("Drawing the projection layer directly in the distortion pass with overlays (timewarp %s)",
+				        d->do_timewarp ? "enabled" : "disabled");
+				logged = true;
+			}
+		}
 
 		/*
 		 * Layer squashing.
@@ -1482,6 +1542,8 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 		    d,                  //
 		    transition_to);     //
 
+		sf_comp_passthrough_trace(d->passthrough, d, layers, layer_count);
+
 		/*
 		 * Distortion.
 		 */
@@ -1489,7 +1551,8 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 		    render,                  //
 		    d,                       //
 		    quads,                   //
-		    quad_count);             //
+		    quad_count,              //
+		    projection);             //
 
 	} else {
 		// Just clear the screen

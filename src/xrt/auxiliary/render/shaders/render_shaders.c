@@ -40,6 +40,7 @@
 #include "frame_passthrough.vert.h"
 #include "frame_passthrough.frag.h"
 #include "mesh.frag.h"
+#include "mesh_projection.frag.h"
 #include "mesh_quad.frag.h"
 #include "mesh.vert.h"
 
@@ -117,6 +118,7 @@ render_shaders_load(struct render_shaders *s, struct vk_bundle *vk)
 	LOAD(frame_passthrough_frag);
 	LOAD(mesh_vert);
 	LOAD(mesh_frag);
+	LOAD(mesh_projection_frag);
 	LOAD(mesh_quad_frag);
 
 	LOAD(layer_cylinder_frag);
@@ -144,6 +146,7 @@ render_shaders_fini(struct render_shaders *s, struct vk_bundle *vk)
 	D(ShaderModule, s->mesh_vert);
 	D(ShaderModule, s->mesh_frag);
 	D(ShaderModule, s->mesh_quad_frag);
+	D(ShaderModule, s->mesh_projection_frag);
 
 	D(ShaderModule, s->layer_cylinder_frag);
 	D(ShaderModule, s->layer_cylinder_vert);
