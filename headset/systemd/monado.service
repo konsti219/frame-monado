@@ -1,0 +1,50 @@
+[Unit]
+Description=Monado with driver_cv in direct mode
+PartOf=monado-session.target
+OnFailure=monado-session-fallback.service
+
+[Service]
+Environment=STEAMVR_LH_ENABLE=1 STEAMVR_PATH=/opt/steamvr STEAMVR_LH_DRIVER=cv LH_STUB_UNKNOWN=1
+Environment=XRT_COMPOSITOR_FORCE_VK_DISPLAY=0 XRT_NO_STDIN=1
+# Gamescope's WSI layer has nothing to hook here and logs every frame, which gets the journal rate-limited
+Environment=DISABLE_GAMESCOPE_WSI=1
+# Initial device discovery; cv controllers can also connect after startup
+Environment=LH_DISCOVER_WAIT_MS=15000
+# Full rate on turnip's VK_KHR_display needs 3 images and the graphics (not compute) compositor path;
+# mode 6 is 72 Hz like SteamVR (0: 120, 1: 144, 2: 108, 3: 96, 4: 90, 5: 80), and 100% avoids Monado's default
+# 140% render scale
+Environment=XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3 XRT_COMPOSITOR_COMPUTE=0 XRT_COMPOSITOR_DESIRED_MODE=6
+Environment=XRT_COMPOSITOR_SCALE_PERCENTAGE=100
+# Turnip's autotune renders the distortion pass from system memory once quads are blended into it (SteamVR's way of
+# drawing quads, see comp_render_gfx.c); tile memory is ~1 ms faster there and about even elsewhere
+Environment=TU_DEBUG=gmem
+# Headset backlight and battery straight from sysfs instead of through driver_cv
+Environment=STEAMVR_LH_BACKLIGHT=/sys/class/backlight/ae94000.dsi.0 STEAMVR_LH_BATTERY=/sys/class/power_supply/max1720x_bat_7-36
+# Present to photons: the panel's 10.7 ms vsync-to-photons from driver_cv's device config. That holds only while
+# frames don't queue: Mesa's VK_KHR_display WSI commits a frame after the previous one flipped, so one late frame
+# leaves every later one a refresh behind. Like SteamVR's compositor (which commits just in time itself), wait for
+# each frame to reach the screen before starting the next, and adapt the compositor budget (at least
+# U_PACING_COMP_MIN_TIME_MS) so frames end 2.5 ms before the vblank.
+Environment=U_PACING_COMP_PRESENT_TO_DISPLAY_OFFSET_MS=10.7 XRT_COMPOSITOR_USE_PRESENT_WAIT=1
+Environment=U_PACING_COMP_ADAPTIVE_BUDGET=1
+Environment=U_PACING_COMP_MIN_TIME_MS=5
+# driver_cv runs helpers like bin/linuxarm64/start_eyetracking.sh relative to the runtime root
+WorkingDirectory=%h/sf/rt
+ExecStartPre=/bin/rm -f %t/monado_comp_ipc
+# After a switch from game mode, SteamVR's vrserver keeps the controllers' radio dongle for a few more seconds
+# (CRoyDongle::Stop comes ~4 s after the session ends); driver_cv starting on it meanwhile leaves the controllers
+# connected but without any data. Wait for vrserver to exit, at most 20 s.
+ExecStartPre=/bin/sh -c 'for i in $(seq 100); do pgrep -x vrserver >/dev/null || exit 0; sleep 0.2; done; exit 0'
+# Block queues from an earlier run: XRService would connect to these stale files at startup, and when the
+# controllers turn on later their driver creates fresh queues under the same names, leaving XRService on the
+# orphaned memory (no controller poses, only haptics). Without them XRService retries until the queues exist.
+ExecStartPre=/bin/sh -c 'rm -f /dev/shm/sfbq_*'
+# Realtime scheduling for the compositor threads; installs drop the file capability
+ExecStartPre=-/usr/bin/sudo -n /usr/bin/setcap cap_sys_nice+ep %h/.local/opt/monado/bin/monado-service
+# The layout holds a hardlink (not a symlink: /proc/self/exe resolves those), refreshed after reinstalls
+ExecStartPre=/bin/ln -f %h/.local/opt/monado/bin/monado-service %h/sf/rt/bin/linuxarm64/monado-service
+# SteamVR's display chromatic aberration correction (CAC_BLOB on the CRTC, copied from a SteamVR session at 72 Hz):
+# Monado uses green distortion for all colours; the display corrects colour fringes.
+ExecStartPre=-/bin/sh -c 'sudo -n %h/sf/kmscac/kmscac set "$$(cat %h/sf/frame-monado/cac_blob_72hz.hex)"'
+# Started from the SteamVR-shaped layout, since driver_cv finds XRService relative to the executable
+ExecStart=%h/sf/rt/bin/linuxarm64/monado-service

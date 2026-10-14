@@ -1,0 +1,3 @@
+#!/bin/sh
+# SDDM session entry for monado.desktop; the session lives as long as monado-session.target
+exec systemctl --user --wait start monado-session.target

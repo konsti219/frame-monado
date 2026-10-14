@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Monado
+Comment=Monado with Valve's tracking, no SteamVR
+Exec=/home/steamos/sf/monado-session
+Type=Application
+DesktopNames=Monado

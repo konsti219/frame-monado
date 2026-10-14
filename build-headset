@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")" && pwd)
+mkdir -p "$root/out/headset/stage"
+exec 9>"$root/out/headset/build.lock"
+flock 9
+podman build -t localhost/frame-monado-cross -f "$root/tools/Containerfile" "$root/tools"
+podman run --rm --userns=keep-id -v "$root:/work:Z" -w /work \
+    localhost/frame-monado-cross bash /work/tools/compile-headset.sh

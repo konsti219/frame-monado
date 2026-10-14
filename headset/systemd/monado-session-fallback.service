@@ -1,0 +1,6 @@
+[Unit]
+Description=Back to the Steam session when Monado fails
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/steamosctl switch-to-game-mode

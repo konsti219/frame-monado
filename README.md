@@ -1,4 +1,6 @@
-# Monado - XR Runtime (XRT)
+# Frame Monado - XR Runtime (XRT)
+
+Steam Frame build/deploy instructions and branch layout: [docs/FRAME.md](docs/FRAME.md).
 
 <!--
 Copyright 2018-2021, Collabora, Ltd.

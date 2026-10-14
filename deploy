@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")" && pwd)
+headset=${FRAME_HEADSET:-steamos@frame}
+stage="$root/out/headset/stage/home/steamos/.local/opt/monado"
+[ -x "$stage/bin/monado-service" ] || { echo "Run ./build-headset first" >&2; exit 1; }
+ssh "$headset" 'mkdir -p ~/.local/state/frame-monado/deploy ~/sf/frame-monado ~/.config/systemd/user'
+tar -C "$stage" -cf - . | ssh "$headset" 'tar -C ~/.local/state/frame-monado/deploy -xf -'
+tar -C "$root/headset" --exclude='*.c' -cf - . | ssh "$headset" 'tar -C ~/sf/frame-monado -xf -'
+ssh "$headset" 'bash -s' <<'REMOTE'
+set -euo pipefail
+stage="$HOME/.local/state/frame-monado/deploy"
+if report=$(LD_LIBRARY_PATH="$stage/lib" ldd "$stage/bin/monado-service" 2>&1) && [[ "$report" != *"not found"* ]]; then :; else
+    printf '%s\n' "$report" >&2
+    exit 1
+fi
+monado_active=false
+shell_active=false
+if systemctl --user is-active --quiet monado.service; then monado_active=true; fi
+if systemctl --user is-active --quiet frame-shell.service; then shell_active=true; fi
+touch "$XDG_RUNTIME_DIR/frame-shell-sleeping"
+trap 'rm -f "$XDG_RUNTIME_DIR/frame-shell-sleeping"' EXIT
+systemctl --user stop frame-shell.service 2>/dev/null || true
+systemctl --user stop monado.service 2>/dev/null || true
+mkdir -p "$HOME/.local/opt/monado" "$HOME/.local/bin"
+cp -a "$stage/." "$HOME/.local/opt/monado/"
+install -m755 "$HOME/sf/frame-monado/frame-sleep" "$HOME/.local/bin/frame-sleep"
+install -m644 "$HOME/sf/frame-monado/systemd/monado.service" "$HOME/sf/frame-monado/systemd/monado-session.target" "$HOME/sf/frame-monado/systemd/monado-session-fallback.service" "$HOME/.config/systemd/user/"
+if [ -d "$HOME/sf/rt/bin/linuxarm64" ]; then
+    install -m755 "$HOME/.local/opt/monado/lib/monado/vrclient.so" "$HOME/sf/rt/bin/linuxarm64/vrclient.so"
+else
+    "$HOME/sf/frame-monado/setup-rt.sh"
+fi
+systemctl --user daemon-reload
+if "$monado_active"; then systemctl --user start monado.service; fi
+if "$shell_active"; then systemctl --user start frame-shell.service; fi
+REMOTE

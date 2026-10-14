@@ -117,3 +117,5 @@ result/
 
 # Kotlin
 .kotlin
+
+/out/
