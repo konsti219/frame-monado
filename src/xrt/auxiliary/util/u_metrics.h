@@ -10,6 +10,10 @@
 #pragma once
 
 #include "xrt/xrt_compiler.h"
+#include "xrt/xrt_handles.h"
+#include "xrt/xrt_results.h"
+
+#include <stdio.h>
 
 
 #ifdef __cplusplus
@@ -32,6 +36,8 @@ struct u_metrics_session_frame
 	uint64_t when_delivered_ns;
 	uint64_t when_gpu_done_ns;
 	bool discarded;
+	uint64_t when_submit_begin_ns;
+	uint64_t when_submit_end_ns;
 };
 
 struct u_metrics_used
@@ -82,6 +88,12 @@ struct u_metrics_system_present_info
 
 void
 u_metrics_init(void);
+
+xrt_result_t
+u_metrics_add_file(FILE *file, bool early_flush);
+
+xrt_result_t
+u_metrics_add_file_handle(xrt_file_handle_t handle, bool early_flush);
 
 void
 u_metrics_close(void);

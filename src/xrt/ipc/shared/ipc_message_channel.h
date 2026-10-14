@@ -220,6 +220,62 @@ ipc_send_handles_shmem(struct ipc_message_channel *imc,
 
 
 /*!
+ * @name File handle utilities
+ * @brief Send/receive file handles along with scalar/aggregate message data.
+ * @{
+ */
+
+/*!
+ * Receive a message along with a known number of file handles over the IPC
+ * channel.
+ *
+ * @param imc Message channel to use
+ * @param[out] out_data Pointer to the buffer to fill with data. Must not be
+ * null.
+ * @param[in] size Maximum size to read, must be greater than 0
+ * @param[out] out_handles Array of file handles to populate.  Must not be
+ * null.
+ * @param[in] handle_count Number of elements to receive into @p out_handles,
+ * must be greater than 0 and must match the value provided at the other end.
+ *
+ * @public @memberof ipc_message_channel
+ * @see xrt_file_handle_t
+ */
+xrt_result_t
+ipc_receive_handles_file(struct ipc_message_channel *imc,
+                         void *out_data,
+                         size_t size,
+                         xrt_file_handle_t *out_handles,
+                         uint32_t handle_count);
+
+
+/*!
+ * Send a message along with file handles over the IPC channel.
+ *
+ * @param imc Message channel to use
+ * @param[in] data Pointer to the data buffer to send. Must not be
+ * null: use a filler message if necessary.
+ * @param[in] size Size of data pointed-to by @p data, must be greater than 0
+ * @param[out] handles Array of file handles to send.  Must not be null.
+ * @param[in] handle_count Number of elements in @p handles, must be greater
+ * than 0. If this is variable, it must also be separately transmitted ahead of
+ * time, because the receiver must have the same value in its receive call.
+ *
+ * @public @memberof ipc_message_channel
+ * @see xrt_file_handle_t
+ */
+xrt_result_t
+ipc_send_handles_file(struct ipc_message_channel *imc,
+                      const void *data,
+                      size_t size,
+                      const xrt_file_handle_t *handles,
+                      uint32_t handle_count);
+/*!
+ * @}
+ */
+
+
+/*!
  * @name Graphics buffer handle utilities
  * @brief Send/receive graphics buffer handles along with scalar/aggregate
  * message data.

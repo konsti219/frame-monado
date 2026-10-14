@@ -83,12 +83,33 @@ m_relation_history_push_with_motion_estimation(struct m_relation_history *rh,
  * Read-only operation - doesn't remove anything from the buffer or anything like that - you can call this as often
  * as you want.
  *
+ * @param max_extrapolation_ns Maximum time the pose may be extrapolated to. INT64_MAX means extrapolation is unlimited.
+ * @param out_timestamp_ns Optional out parameter for the timestamp of the pose.
+ * @param out_relation Out parameter for the resulting @ref xrt_space_relation.
+ *
  * @public @memberof m_relation_history
  */
 enum m_relation_history_result
+m_relation_history_get_clamped(const struct m_relation_history *rh,
+                               int64_t at_timestamp_ns,
+                               int64_t max_extrapolation_ns,
+                               int64_t *out_timestamp_ns,
+                               struct xrt_space_relation *out_relation);
+
+/*!
+ * Wrapper for @ref m_relation_history_get_clamped with unlimited extrapolation.
+ *
+ * @copydoc m_relation_history_get_clamped
+ *
+ * @public @memberof m_relation_history
+ */
+static inline enum m_relation_history_result
 m_relation_history_get(const struct m_relation_history *rh,
                        int64_t at_timestamp_ns,
-                       struct xrt_space_relation *out_relation);
+                       struct xrt_space_relation *out_relation)
+{
+	return m_relation_history_get_clamped(rh, at_timestamp_ns, INT64_MAX, NULL, out_relation);
+}
 
 /*!
  * Get the latest report in the buffer, if any.

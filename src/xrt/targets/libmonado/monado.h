@@ -751,6 +751,18 @@ mnd_result_t
 mnd_root_set_chroma_key_params(
     mnd_root_t *root, struct mnd_colour_hsv hsv_min, struct mnd_colour_hsv hsv_max, float curve, float despill);
 
+/*!
+ * @brief Add a file descriptor to the set of fds to write metrics to.
+ *
+ * @param root              The libmonado state.
+ * @param[in] fd            The file descriptor to write metrics to.
+ * @param[in] early_flush   Whether to buffer metrics (false) or not (true).
+ *
+ * @return MND_SUCCESS on success
+ */
+mnd_result_t
+mnd_root_push_metrics_fd(mnd_root_t *root, int fd, bool early_flush);
+
 #ifdef __cplusplus
 }
 #endif

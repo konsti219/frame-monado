@@ -252,6 +252,23 @@ ipc_send_handles_shmem(struct ipc_message_channel *imc,
 	return ipc_send_fds(imc, data, size, handles, handle_count);
 }
 
+xrt_result_t
+ipc_receive_handles_file(
+    struct ipc_message_channel *imc, void *out_data, size_t size, xrt_file_handle_t *out_handles, uint32_t handle_count)
+{
+	return ipc_receive_fds(imc, out_data, size, out_handles, handle_count);
+}
+
+xrt_result_t
+ipc_send_handles_file(struct ipc_message_channel *imc,
+                      const void *data,
+                      size_t size,
+                      const xrt_file_handle_t *handles,
+                      uint32_t handle_count)
+{
+	return ipc_send_fds(imc, data, size, handles, handle_count);
+}
+
 
 /*
  *

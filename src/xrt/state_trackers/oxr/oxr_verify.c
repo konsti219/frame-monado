@@ -676,16 +676,6 @@ oxr_verify_XrGraphicsBindingOpenGLXlibKHR(struct oxr_logger *log, const XrGraphi
 		                 "XrGraphicsBindingOpenGLXlibKHR::glxDrawable is NULL");
 	}
 
-	if (next->glxFBConfig == NULL) {
-		return oxr_error(log, XR_ERROR_GRAPHICS_DEVICE_INVALID,
-		                 "XrGraphicsBindingOpenGLXlibKHR::glxFBConfig is NULL");
-	}
-
-	if (next->visualid == 0) {
-		return oxr_error(log, XR_ERROR_GRAPHICS_DEVICE_INVALID,
-		                 "XrGraphicsBindingOpenGLXlibKHR::visualid is 0");
-	}
-
 	return XR_SUCCESS;
 }
 

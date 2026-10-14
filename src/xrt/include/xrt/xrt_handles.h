@@ -110,6 +110,95 @@ xrt_ipc_handle_close(xrt_ipc_handle_t handle)
 
 /*
  *
+ * xrt_file_handle_t
+ *
+ */
+
+#if defined(XRT_OS_WINDOWS)
+/*!
+ * The type for a file handle.
+ *
+ * On Windows, this is HANDLE.
+ */
+typedef HANDLE xrt_file_handle_t;
+
+/*!
+ * An invalid value for a file handle.
+ *
+ * Note that there may be more than one value that's invalid - use
+ * @ref xrt_file_handle_is_valid instead of comparing against this!
+ *
+ * @relates xrt_file_handle_t
+ */
+#define XRT_FILE_HANDLE_INVALID INVALID_HANDLE_VALUE
+
+/*!
+ * Check whether a file handle is valid.
+ *
+ * @public @memberof xrt_file_handle_t
+ */
+static inline bool
+xrt_file_handle_is_valid(xrt_file_handle_t handle)
+{
+	return handle != INVALID_HANDLE_VALUE;
+}
+
+/*!
+ * Close a file handle.
+ *
+ * @public @memberof xrt_file_handle_t
+ */
+static inline void
+xrt_file_handle_close(xrt_file_handle_t handle)
+{
+	CloseHandle(handle);
+}
+
+#else // !XRT_OS_WINDOWS
+
+/*!
+ * The type for a file handle.
+ *
+ * On non-Windows, this is a file descriptor.
+ */
+typedef int xrt_file_handle_t;
+
+/*!
+ * An invalid value for a file handle.
+ *
+ * Note that there may be more than one value that's invalid - use
+ * @ref xrt_file_handle_is_valid instead of comparing against this!
+ *
+ * @relates xrt_file_handle_t
+ */
+#define XRT_FILE_HANDLE_INVALID (-1)
+
+/*!
+ * Check whether a file handle is valid.
+ *
+ * @public @memberof xrt_file_handle_t
+ */
+static inline bool
+xrt_file_handle_is_valid(xrt_file_handle_t handle)
+{
+	return handle >= 0;
+}
+
+/*!
+ * Close a file handle.
+ *
+ * @public @memberof xrt_file_handle_t
+ */
+static inline void
+xrt_file_handle_close(xrt_file_handle_t handle)
+{
+	close(handle);
+}
+
+#endif // !XRT_OS_WINDOWS
+
+/*
+ *
  * xrt_shmem_handle_t
  *
  */

@@ -1922,9 +1922,6 @@ session_update_action_bindings(struct oxr_logger *log,
 #define POPULATE_PROFILE(X)                                                                                            \
 	do {                                                                                                           \
 		XrPath path = profiles.X != NULL ? profiles.X->path : XR_NULL_PATH;                                    \
-		if (path == XR_NULL_PATH) {                                                                            \
-			break; /* Only update on "active" interaction profiles per sub-action path. */                 \
-		}                                                                                                      \
 		if (action_context->X != path) {                                                                       \
 			action_context->X = path;                                                                      \
 			interaction_profile_changed = true;                                                            \

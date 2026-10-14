@@ -15,6 +15,8 @@
 #include "xrt/xrt_results.h"
 #include "xrt/xrt_session.h"
 
+#include "math/m_api.h"
+
 #include "os/os_time.h"
 #include "os/os_threading.h"
 
@@ -230,23 +232,31 @@ find_active_blend_mode(struct multi_compositor **overlay_sorted_clients, size_t 
 	if (overlay_sorted_clients == NULL)
 		return XRT_BLEND_MODE_OPAQUE;
 
-	const struct multi_compositor *first_visible = NULL;
+	enum xrt_blend_mode chosen_mode = 0;
 	for (size_t k = 0; k < size; ++k) {
 		const struct multi_compositor *mc = overlay_sorted_clients[k];
 		assert(mc != NULL);
 
-		// if a focused client is found just return, "first_visible" has lower priority and can be ignored.
-		if (mc->state.focused) {
-			assert(mc->state.visible);
-			return mc->delivered.data.env_blend_mode;
+		if (!mc->state.visible) {
+			continue;
 		}
 
-		if (first_visible == NULL && mc->state.visible) {
-			first_visible = mc;
+		// if any uses opaque, use opaque
+		if (mc->delivered.data.env_blend_mode == XRT_BLEND_MODE_OPAQUE) {
+			return XRT_BLEND_MODE_OPAQUE;
+		}
+
+		// if all use the same mode, use that mode
+		if (chosen_mode == 0) {
+			chosen_mode = mc->delivered.data.env_blend_mode;
+		} else if (chosen_mode != mc->delivered.data.env_blend_mode) {
+			// TODO: account for the case of mixed ALPHA_BLEND and ADDITIVE
+			return XRT_BLEND_MODE_OPAQUE;
 		}
 	}
-	if (first_visible != NULL)
-		return first_visible->delivered.data.env_blend_mode;
+	if (chosen_mode != 0)
+		return chosen_mode;
+	// no visible clients
 	return XRT_BLEND_MODE_OPAQUE;
 }
 
@@ -427,17 +437,24 @@ broadcast_timings_to_pacers(struct multi_system_compositor *msc,
 }
 
 static void
-wait_frame(struct os_precise_sleeper *sleeper, struct xrt_compositor *xc, int64_t frame_id, int64_t wake_up_time_ns)
+wait_frame(struct multi_system_compositor *msc, struct xrt_compositor *xc, int64_t frame_id, int64_t wake_up_time_ns)
 {
 	COMP_TRACE_MARKER();
 
 	// Wait until the given wake up time.
-	u_wait_until(sleeper, wake_up_time_ns);
-
 	int64_t now_ns = os_monotonic_get_ns();
 
-	// Signal that we woke up.
-	xrt_comp_mark_frame(xc, frame_id, XRT_COMPOSITOR_FRAME_POINT_WOKE, now_ns);
+	// Lets hope its not to late.
+	bool fuzzy_in_the_past = time_is_less_then_or_within_range(wake_up_time_ns, now_ns, U_TIME_1MS_IN_NS);
+
+	// When we should wake up is in the past:ish.
+	if (! fuzzy_in_the_past) {
+		struct timespec wake_ts;
+		os_ns_to_timespec(wake_up_time_ns, &wake_ts);
+		os_mutex_lock(&msc->wake_mutex);
+		pthread_cond_clockwait(&msc->wake_cond.cond, &msc->wake_mutex.mutex, CLOCK_MONOTONIC, &wake_ts);
+		os_mutex_unlock(&msc->wake_mutex);
+	}
 }
 
 static void
@@ -576,10 +593,13 @@ multi_main_loop(struct multi_system_compositor *msc)
 		broadcast_timings_to_clients(msc, predicted_display_time_ns);
 
 		// Now we can wait.
-		wait_frame(&sleeper, xc, frame_id, wake_up_time_ns);
+		wait_frame(msc, xc, frame_id, wake_up_time_ns);
 
 		int64_t now_ns = os_monotonic_get_ns();
-		int64_t diff_ns = predicted_display_time_ns - now_ns;
+		// Signal that we woke up.
+		xrt_comp_mark_frame(xc, frame_id, XRT_COMPOSITOR_FRAME_POINT_WOKE, now_ns);
+
+		int64_t diff_ns = predicted_display_time_ns - MAX(wake_up_time_ns, now_ns);
 
 		// Now we know the diff, broadcast to pacers.
 		broadcast_timings_to_pacers(msc, predicted_display_time_ns, predicted_display_period_ns, diff_ns);
@@ -815,6 +835,8 @@ system_compositor_destroy(struct xrt_system_compositor *xsc)
 	xrt_comp_native_destroy(&msc->xcn);
 
 	os_mutex_destroy(&msc->list_and_timing_lock);
+	os_mutex_destroy(&msc->wake_mutex);
+	os_cond_destroy(&msc->wake_cond);
 
 	free(msc);
 }
@@ -874,6 +896,8 @@ comp_multi_create_system_compositor(struct xrt_compositor_native *xcn,
 	msc->get_view_config_callback = get_view_config_callback;
 
 	os_mutex_init(&msc->list_and_timing_lock);
+	os_mutex_init(&msc->wake_mutex);
+	os_cond_init(&msc->wake_cond);
 
 	//! @todo Make the clients not go from IDLE to READY before we have completed a first frame.
 	// Make sure there is at least some sort of valid frame data here.

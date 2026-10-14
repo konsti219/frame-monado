@@ -287,4 +287,9 @@ typedef enum xrt_result
 	 * This does not, however, indicate a permanent inability to start the stream. Other modes may work.
 	 */
 	XRT_ERROR_STREAMING_START_FAILED = -47,
+
+	/*!
+	 * Failed to allocate system memory required for the operation.
+	 */
+	XRT_ERROR_OUT_OF_MEMORY = -48,
 } xrt_result_t;

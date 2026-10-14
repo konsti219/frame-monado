@@ -399,7 +399,7 @@ compositor_request_display_refresh_rate(struct xrt_compositor *xc, float display
 	if (c->target && c->target->request_refresh_rate) {
 		xrt_result_t result = comp_target_request_refresh_rate(c->target, display_refresh_rate_hz);
 		// Assume refresh rate change is immediate
-		if (result == XRT_SUCCESS)
+		if (result == XRT_SUCCESS && display_refresh_rate_hz > 0)
 			c->frame_interval_ns = U_TIME_1S_IN_NS / display_refresh_rate_hz;
 		return result;
 	}

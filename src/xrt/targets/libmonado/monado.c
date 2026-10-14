@@ -956,3 +956,25 @@ mnd_root_set_chroma_key_params(
 	default: PE("Internal error, shouldn't get here"); return MND_ERROR_OPERATION_FAILED;
 	}
 }
+
+mnd_result_t
+mnd_root_push_metrics_fd(mnd_root_t *root, int fd, bool early_flush)
+{
+	CHECK_NOT_NULL(root);
+	if (fd < 0) {
+		return MND_ERROR_OPERATION_FAILED;
+	}
+
+#if defined(XRT_OS_WINDOWS)
+	xrt_file_handle_t handle = (HANDLE)_get_osfhandle(fd);
+#else
+	xrt_file_handle_t handle = fd;
+#endif
+
+	xrt_result_t xret = ipc_call_system_add_metrics_file_handle(&root->ipc_c, early_flush, &handle, 1);
+	switch (xret) {
+	case XRT_SUCCESS: return MND_SUCCESS;
+	case XRT_ERROR_IPC_FAILURE: PE("Connection error!"); return MND_ERROR_OPERATION_FAILED;
+	default: PE("Internal error, shouldn't get here"); return MND_ERROR_OPERATION_FAILED;
+	}
+}

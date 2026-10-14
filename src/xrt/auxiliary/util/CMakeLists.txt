@@ -10,11 +10,6 @@
 # by applications like the OpenXR runtime library.
 #
 
-configure_file(
-	"${CMAKE_CURRENT_SOURCE_DIR}/u_git_tag.c.in" "${CMAKE_CURRENT_BINARY_DIR}/u_git_tag.c"
-	@ONLY
-	)
-
 add_library(
 	aux_util STATIC
 	u_autoexpgain.c
@@ -137,7 +132,7 @@ add_library(
 	u_worker.cpp
 	u_worker.h
 	u_worker.hpp
-	"${CMAKE_CURRENT_BINARY_DIR}/u_git_tag.c"
+	"${U_GIT_TAG_CPP}"
 	)
 target_link_libraries(
 	aux_util

@@ -366,6 +366,10 @@ struct multi_system_compositor
 	 */
 	struct os_mutex list_and_timing_lock;
 
+
+	struct os_mutex wake_mutex;
+	struct os_cond wake_cond;
+
 	struct
 	{
 		int64_t predicted_display_time_ns;

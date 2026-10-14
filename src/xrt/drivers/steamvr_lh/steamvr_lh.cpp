@@ -1082,7 +1082,7 @@ steamvr_lh_create_devices(struct xrt_prober *xp, struct xrt_system_devices *xsys
 
 	// Include the HMD
 	if (ctx->hmd) {
-		if (ctx->hmd->variant == VIVE_VARIANT_PRO2 && !ctx->hmd->init_vive_pro_2(xp)) {
+		if (xp && ctx->hmd->variant == VIVE_VARIANT_PRO2 && !ctx->hmd->init_vive_pro_2(xp)) {
 			U_LOG_IFL_W(level, "Found Vive Pro 2, but failed to initialize.");
 		}
 

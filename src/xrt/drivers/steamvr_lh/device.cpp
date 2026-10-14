@@ -53,6 +53,7 @@
 DEBUG_GET_ONCE_BOOL_OPTION(lh_emulate_hand, "LH_EMULATE_HAND", true)
 DEBUG_GET_ONCE_FLOAT_OPTION(lh_override_ipd, "LH_OVERRIDE_IPD_MM", -1.0f)
 DEBUG_GET_ONCE_BOOL_OPTION(lh_standby_on_exit, "LH_STANDBY_ON_EXIT", false)
+DEBUG_GET_ONCE_NUM_OPTION(lh_max_extrapolation_ms, "LH_MAX_EXTRAPOLATION_MS", 50)
 
 // Each device will have its own input class.
 struct InputClass
@@ -777,7 +778,17 @@ ControllerDevice::get_hand_tracking(enum xrt_input_name name,
 void
 Device::get_pose(uint64_t at_timestamp_ns, xrt_space_relation *out_relation)
 {
-	m_relation_history_get(this->relation_hist, at_timestamp_ns, out_relation);
+	static const int64_t max_extrapolation_ns = []() -> int64_t {
+		int64_t raw = debug_get_num_option_lh_max_extrapolation_ms();
+		if (raw == -1) {
+			return INT64_MAX;
+		}
+
+		return raw * U_TIME_1MS_IN_NS;
+	}();
+
+	m_relation_history_get_clamped(this->relation_hist, at_timestamp_ns, max_extrapolation_ns, nullptr,
+	                               out_relation);
 }
 
 xrt_result_t

@@ -112,5 +112,12 @@
 		"out": [
 			{"name": "view_config", "type": "struct xrt_view_config"}
 		]
+	},
+
+	"system_add_metrics_file_handle": {
+		"in": [
+			{"name": "early_flush", "type": "bool"}
+		],
+		"in_handles": {"type": "xrt_file_handle_t"}
 	}
 }

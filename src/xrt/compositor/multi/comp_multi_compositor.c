@@ -236,7 +236,21 @@ wait_for_scheduled_free(struct multi_compositor *mc)
 	os_mutex_lock(&mc->slot_lock);
 	slot_move_and_clear_locked(mc, &mc->scheduled, &mc->progress);
 	os_mutex_unlock(&mc->slot_lock);
+
+	bool done = true;
+	for (int k = 0; k < MULTI_MAX_CLIENTS && done; ++k) {
+		struct multi_compositor *m = mc->msc->clients[k];
+		if (m == NULL || !m->state.session_active)
+			continue;
+		os_mutex_lock(&m->slot_lock);
+		if (!time_is_within_half_ms(m->scheduled.data.display_time_ns, m->slot_next_frame_display))
+			done = false;
+		os_mutex_unlock(&m->slot_lock);
+	}
 	os_mutex_unlock(&mc->msc->list_and_timing_lock);
+
+	if (done)
+		os_cond_signal(&mc->msc->wake_cond);
 }
 
 static void *
@@ -646,6 +660,17 @@ multi_compositor_layer_begin(struct xrt_compositor *xc, const struct xrt_layer_f
 	 */
 	wait_for_wait_thread(mc);
 
+	/*
+	 * Everything up to here was spent waiting for the previous frame's slot
+	 * to free up, not on this frame's work, so mark the submit window as
+	 * starting now. Metrics consumers use this to separate app GPU time
+	 * from the back-pressure this function applies.
+	 */
+	now_ns = os_monotonic_get_ns();
+	os_mutex_lock(&mc->msc->list_and_timing_lock);
+	u_pa_mark_point(mc->upa, data->frame_id, U_TIMING_POINT_SUBMIT_BEGIN, now_ns);
+	os_mutex_unlock(&mc->msc->list_and_timing_lock);
+
 	assert(mc->progress.layer_count == 0);
 	U_ZERO(&mc->progress);
 
@@ -784,6 +809,11 @@ multi_compositor_layer_commit(struct xrt_compositor *xc, xrt_graphics_sync_handl
 	struct xrt_compositor_fence *xcf = NULL;
 	int64_t frame_id = mc->progress.data.frame_id;
 
+	int64_t submit_end_ns = os_monotonic_get_ns();
+	os_mutex_lock(&mc->msc->list_and_timing_lock);
+	u_pa_mark_point(mc->upa, frame_id, U_TIMING_POINT_SUBMIT_END, submit_end_ns);
+	os_mutex_unlock(&mc->msc->list_and_timing_lock);
+
 	do {
 		if (!xrt_graphics_sync_handle_is_valid(sync_handle)) {
 			break;
@@ -830,6 +860,11 @@ multi_compositor_layer_commit_with_semaphore(struct xrt_compositor *xc,
 
 	struct multi_compositor *mc = multi_compositor(xc);
 	int64_t frame_id = mc->progress.data.frame_id;
+
+	int64_t submit_end_ns = os_monotonic_get_ns();
+	os_mutex_lock(&mc->msc->list_and_timing_lock);
+	u_pa_mark_point(mc->upa, frame_id, U_TIMING_POINT_SUBMIT_END, submit_end_ns);
+	os_mutex_unlock(&mc->msc->list_and_timing_lock);
 
 	push_semaphore_to_wait_thread(mc, frame_id, xcsem, value);
 

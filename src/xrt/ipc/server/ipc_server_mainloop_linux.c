@@ -50,6 +50,8 @@
 #endif
 
 
+extern int listen_socket;
+
 /*
  *
  * Static functions.
@@ -58,6 +60,12 @@
 static int
 get_systemd_socket(struct ipc_server_mainloop *ml, int *out_fd)
 {
+	if (listen_socket >= 0)
+	{
+		ml->launched_by_socket = true;
+		*out_fd = listen_socket;
+		return 0;
+	}
 #ifdef XRT_HAVE_SYSTEMD
 	// We may have been launched with socket activation
 	int num_fds = sd_listen_fds(0);

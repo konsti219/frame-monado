@@ -46,6 +46,8 @@ typedef struct _monado_metrics_SessionFrame {
     uint64_t when_gpu_done_ns;
     /* ! Was this frame discared. */
     bool discarded;
+    uint64_t when_submit_begin_ns;
+    uint64_t when_submit_end_ns;
 } monado_metrics_SessionFrame;
 
 typedef struct _monado_metrics_Used {
@@ -140,14 +142,14 @@ extern "C" {
 
 /* Initializer values for message structs */
 #define monado_metrics_Version_init_default      {0, 0}
-#define monado_metrics_SessionFrame_init_default {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+#define monado_metrics_SessionFrame_init_default {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define monado_metrics_Used_init_default         {0, 0, 0, 0}
 #define monado_metrics_SystemFrame_init_default  {0, 0, 0, 0, 0, 0}
 #define monado_metrics_SystemGpuInfo_init_default {0, 0, 0, 0}
 #define monado_metrics_SystemPresentInfo_init_default {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define monado_metrics_Record_init_default       {0, {monado_metrics_Version_init_default}}
 #define monado_metrics_Version_init_zero         {0, 0}
-#define monado_metrics_SessionFrame_init_zero    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+#define monado_metrics_SessionFrame_init_zero    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define monado_metrics_Used_init_zero            {0, 0, 0, 0}
 #define monado_metrics_SystemFrame_init_zero     {0, 0, 0, 0, 0, 0}
 #define monado_metrics_SystemGpuInfo_init_zero   {0, 0, 0, 0}
@@ -171,6 +173,8 @@ extern "C" {
 #define monado_metrics_SessionFrame_when_delivered_ns_tag 12
 #define monado_metrics_SessionFrame_when_gpu_done_ns_tag 13
 #define monado_metrics_SessionFrame_discarded_tag 14
+#define monado_metrics_SessionFrame_when_submit_begin_ns_tag 15
+#define monado_metrics_SessionFrame_when_submit_end_ns_tag 16
 #define monado_metrics_Used_session_id_tag       1
 #define monado_metrics_Used_session_frame_id_tag 2
 #define monado_metrics_Used_system_frame_id_tag  3
@@ -228,7 +232,9 @@ X(a, STATIC,   SINGULAR, UINT64,   when_wait_woke_ns,  10) \
 X(a, STATIC,   SINGULAR, UINT64,   when_begin_ns,    11) \
 X(a, STATIC,   SINGULAR, UINT64,   when_delivered_ns,  12) \
 X(a, STATIC,   SINGULAR, UINT64,   when_gpu_done_ns,  13) \
-X(a, STATIC,   SINGULAR, BOOL,     discarded,        14)
+X(a, STATIC,   SINGULAR, BOOL,     discarded,        14) \
+X(a, STATIC,   SINGULAR, UINT64,   when_submit_begin_ns,  15) \
+X(a, STATIC,   SINGULAR, UINT64,   when_submit_end_ns,  16)
 #define monado_metrics_SessionFrame_CALLBACK NULL
 #define monado_metrics_SessionFrame_DEFAULT NULL
 
@@ -312,8 +318,8 @@ extern const pb_msgdesc_t monado_metrics_Record_msg;
 
 /* Maximum encoded size of messages (where known) */
 #define MONADO_METRICS_MONADO_METRICS_PB_H_MAX_SIZE monado_metrics_Record_size
-#define monado_metrics_Record_size               168
-#define monado_metrics_SessionFrame_size         145
+#define monado_metrics_Record_size               191
+#define monado_metrics_SessionFrame_size         168
 #define monado_metrics_SystemFrame_size          66
 #define monado_metrics_SystemGpuInfo_size        44
 #define monado_metrics_SystemPresentInfo_size    165

@@ -455,15 +455,11 @@ oxr_xrRequestDisplayRefreshRateFB(XrSession session, float displayRefreshRate)
 	OXR_VERIFY_SESSION_AND_INIT_LOG(&log, session, sess, "xrRequestDisplayRefreshRateFB");
 	OXR_VERIFY_SESSION_NOT_LOST(&log, sess);
 
-	if (displayRefreshRate == 0.0f) {
-		return XR_SUCCESS;
-	}
-
 	/*
 	 * For the requested display refresh rate, truncating to two decimal
 	 * places and checking if it's in the supported refresh rates.
 	 */
-	bool found = false;
+	bool found = displayRefreshRate == 0.0f;
 	for (int i = 0; i < (int)sess->sys->xsysc->info.refresh_rate_count; ++i) {
 		if ((int)(displayRefreshRate * 100.0f) == (int)(sess->sys->xsysc->info.refresh_rates_hz[i] * 100.0f)) {
 			found = true;

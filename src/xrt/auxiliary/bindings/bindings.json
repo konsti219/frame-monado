@@ -3258,6 +3258,263 @@
 			}
 		},
 
+		"/interaction_profiles/valve/frame_controller_valve": {
+			"title": "Steam Frame Controller",
+			"type": "tracked_controller",
+			"extension": "VALVE_frame_controller_interaction",
+			"monado_device": "XRT_DEVICE_FRAME_CONTROLLER",
+			"extended_by": ["ext/palm_pose", "grip_surface", "ext/hand_interaction_poses"],
+			"subaction_paths": [
+				"/user/hand/left",
+				"/user/hand/right"
+			],
+			"subpaths": {
+				"/input/a": {
+					"type": "button",
+					"localized_name": "A",
+					"components": ["click", "touch"],
+					"side": "right",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_A_CLICK",
+						"touch": "XRT_INPUT_FRAME_A_TOUCH"
+					}
+				},
+				"/input/b": {
+					"type": "button",
+					"localized_name": "B",
+					"components": ["click", "touch"],
+					"side": "right",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_B_CLICK",
+						"touch": "XRT_INPUT_FRAME_B_TOUCH"
+					}
+				},
+				"/input/x": {
+					"type": "button",
+					"localized_name": "X",
+					"components": ["click", "touch"],
+					"side": "right",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_X_CLICK",
+						"touch": "XRT_INPUT_FRAME_X_TOUCH"
+					}
+				},
+				"/input/y": {
+					"type": "button",
+					"localized_name": "Y",
+					"components": ["click", "touch"],
+					"side": "right",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_Y_CLICK",
+						"touch": "XRT_INPUT_FRAME_Y_TOUCH"
+					}
+				},
+				"/input/menu": {
+					"type": "button",
+					"localized_name": "Menu",
+					"components": ["click", "touch"],
+					"side": "right",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_MENU_CLICK",
+						"touch": "XRT_INPUT_FRAME_MENU_TOUCH"
+					}
+				},
+				"/input/system": {
+					"type": "button",
+					"localized_name": "System",
+					"components": ["click", "touch"],
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_SYSTEM_CLICK",
+						"touch": "XRT_INPUT_FRAME_SYSTEM_TOUCH"
+					}
+				},
+				"/input/bumper": {
+					"type": "button",
+					"localized_name": "Bumper",
+					"components": ["click", "touch"],
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_BUMPER_CLICK",
+						"touch": "XRT_INPUT_FRAME_BUMPER_TOUCH"
+					}
+				},
+				"/input/squeeze": {
+					"type": "button",
+					"localized_name": "Squeeze",
+					"components": ["click", "touch", "value"],
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_SQUEEZE_CLICK",
+						"touch": "XRT_INPUT_FRAME_SQUEEZE_TOUCH",
+						"value": "XRT_INPUT_FRAME_SQUEEZE_VALUE"
+					}
+				},
+				"/input/trigger": {
+					"type": "trigger",
+					"localized_name": "Trigger",
+					"components": ["click", "value", "touch"],
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_TRIGGER_CLICK",
+						"value": "XRT_INPUT_FRAME_TRIGGER_VALUE",
+						"touch": "XRT_INPUT_FRAME_TRIGGER_TOUCH"
+					}
+				},
+				"/input/thumbstick": {
+					"type": "joystick",
+					"localized_name": "Thumbstick",
+					"components": ["click", "touch", "position"],
+					"dpad_emulation": {
+						"position": "position",
+						"activate": "click",
+						"center": true
+					},
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_THUMBSTICK_CLICK",
+						"touch": "XRT_INPUT_FRAME_THUMBSTICK_TOUCH",
+						"position": "XRT_INPUT_FRAME_THUMBSTICK"
+					}
+				},
+				"/input/grip": {
+					"type": "pose",
+					"localized_name": "Grip",
+					"components": ["pose"],
+					"monado_bindings": {
+						"pose": "XRT_INPUT_FRAME_GRIP_POSE"
+					}
+				},
+				"/input/aim": {
+					"type": "pose",
+					"localized_name": "Aim",
+					"components": ["pose"],
+					"monado_bindings": {
+						"pose": "XRT_INPUT_FRAME_AIM_POSE"
+					}
+				},
+				"/input/dpad_up": {
+					"type": "button",
+					"localized_name": "D-Pad Up",
+					"components": ["click", "touch"],
+					"side": "left",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_DPAD_UP_CLICK",
+						"touch": "XRT_INPUT_FRAME_DPAD_UP_TOUCH"
+					}
+				},
+				"/input/dpad_down": {
+					"type": "button",
+					"localized_name": "D-Pad Down",
+					"components": ["click", "touch"],
+					"side": "left",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_DPAD_DOWN_CLICK",
+						"touch": "XRT_INPUT_FRAME_DPAD_DOWN_TOUCH"
+					}
+				},
+				"/input/dpad_left": {
+					"type": "button",
+					"localized_name": "D-Pad Left",
+					"components": ["click", "touch"],
+					"side": "left",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_DPAD_LEFT_CLICK",
+						"touch": "XRT_INPUT_FRAME_DPAD_LEFT_TOUCH"
+					}
+				},
+				"/input/dpad_right": {
+					"type": "button",
+					"localized_name": "D-Pad Right",
+					"components": ["click", "touch"],
+					"side": "left",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_DPAD_RIGHT_CLICK",
+						"touch": "XRT_INPUT_FRAME_DPAD_RIGHT_TOUCH"
+					}
+				},
+				"/input/view": {
+					"type": "button",
+					"localized_name": "View",
+					"components": ["click", "touch"],
+					"side": "left",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_VIEW_CLICK",
+						"touch": "XRT_INPUT_FRAME_VIEW_TOUCH"
+					}
+				},
+				"/input/bumper_left": {
+					"type": "button",
+					"localized_name": "Bumper",
+					"components": ["click", "touch"],
+					"side": "left",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_BUMPER_CLICK",
+						"touch": "XRT_INPUT_FRAME_BUMPER_TOUCH"
+					}
+				},
+				"/input/squeeze_left": {
+					"type": "button",
+					"localized_name": "Squeeze",
+					"components": ["click", "touch", "value"],
+					"side": "left",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_SQUEEZE_CLICK",
+						"touch": "XRT_INPUT_FRAME_SQUEEZE_TOUCH",
+						"value": "XRT_INPUT_FRAME_SQUEEZE_VALUE"
+					}
+				},
+				"/input/trigger_left": {
+					"type": "trigger",
+					"localized_name": "Trigger",
+					"components": ["click", "value", "touch"],
+					"side": "left",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_TRIGGER_CLICK",
+						"value": "XRT_INPUT_FRAME_TRIGGER_VALUE",
+						"touch": "XRT_INPUT_FRAME_TRIGGER_TOUCH"
+					}
+				},
+				"/input/thumbstick_left": {
+					"type": "joystick",
+					"localized_name": "Thumbstick",
+					"components": ["click", "touch", "position"],
+					"dpad_emulation": {
+						"position": "position",
+						"activate": "click",
+						"center": true
+					},
+					"side": "left",
+					"monado_bindings": {
+						"click": "XRT_INPUT_FRAME_THUMBSTICK_CLICK",
+						"touch": "XRT_INPUT_FRAME_THUMBSTICK_TOUCH",
+						"position": "XRT_INPUT_FRAME_THUMBSTICK"
+					}
+				},
+				"/input/grip_left": {
+					"type": "pose",
+					"localized_name": "Grip",
+					"components": ["pose"],
+					"side": "left",
+					"monado_bindings": {
+						"pose": "XRT_INPUT_FRAME_GRIP_POSE"
+					}
+				},
+				"/input/aim_left": {
+					"type": "pose",
+					"localized_name": "Aim",
+					"components": ["pose"],
+					"side": "left",
+					"monado_bindings": {
+						"pose": "XRT_INPUT_FRAME_AIM_POSE"
+					}
+				},
+				"/output/haptic": {
+					"type": "vibration",
+					"localized_name": "Haptic",
+					"components": ["haptic"],
+					"monado_bindings": {
+						"haptic": "XRT_OUTPUT_NAME_FRAME_HAPTIC"
+					}
+				}
+			}
+		},
+
 		"/interaction_profiles/facebook/touch_controller_pro": {
 			"title": "Meta Quest Touch Pro Controller",
 			"type": "tracked_controller",
