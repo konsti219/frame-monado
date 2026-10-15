@@ -15,6 +15,8 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include <fcntl.h>
@@ -64,6 +66,74 @@ read(const uint8_t *base, size_t offset)
 	T value;
 	std::memcpy(&value, base + offset, sizeof(T));
 	return value;
+}
+
+//! Gaze correction the frame shell fits from pointer clicks (the user looks at what they click), from
+//! ~/.config/frame-shell/eye-calibration ("key value" lines): corrected = (measured - offset) / gain per axis, angles in
+//! degrees (yaw positive right, pitch positive up)
+struct Correction
+{
+	double yaw_gain = 1, yaw_offset = 0, pitch_gain = 1, pitch_offset = 0;
+};
+
+Correction
+read_correction()
+{
+	static Correction correction;
+	static uint64_t next_read_ns;
+	uint64_t now = os_monotonic_get_ns();
+	if (now < next_read_ns) {
+		return correction;
+	}
+	next_read_ns = now + 1'000'000'000;
+	char path[512];
+	const char *config = getenv("XDG_CONFIG_HOME");
+	const char *home = getenv("HOME");
+	if (config != nullptr && *config != '\0') {
+		snprintf(path, sizeof(path), "%s/frame-shell/eye-calibration", config);
+	} else if (home != nullptr) {
+		snprintf(path, sizeof(path), "%s/.config/frame-shell/eye-calibration", home);
+	} else {
+		return correction;
+	}
+	FILE *file = fopen(path, "r");
+	if (file == nullptr) {
+		correction = {};
+		return correction;
+	}
+	Correction read;
+	char line[256];
+	while (fgets(line, sizeof(line), file) != nullptr) {
+		char key[32];
+		double value;
+		if (sscanf(line, "%31s %lf", key, &value) != 2) {
+			continue;
+		}
+		if (strcmp(key, "yaw_gain") == 0 && value > 0.5 && value < 2) {
+			read.yaw_gain = value;
+		} else if (strcmp(key, "yaw_offset") == 0 && std::abs(value) < 20) {
+			read.yaw_offset = value;
+		} else if (strcmp(key, "pitch_gain") == 0 && value > 0.5 && value < 2) {
+			read.pitch_gain = value;
+		} else if (strcmp(key, "pitch_offset") == 0 && std::abs(value) < 20) {
+			read.pitch_offset = value;
+		}
+	}
+	fclose(file);
+	correction = read;
+	return correction;
+}
+
+void
+correct(xrt_vec3 *dir)
+{
+	const Correction c = read_correction();
+	constexpr double deg = M_PI / 180;
+	double yaw = std::atan2(dir->x, -dir->z) / deg;
+	double pitch = std::atan2(dir->y, std::hypot(dir->x, dir->z)) / deg;
+	yaw = (yaw - c.yaw_offset) / c.yaw_gain * deg;
+	pitch = (pitch - c.pitch_offset) / c.pitch_gain * deg;
+	*dir = {float(std::sin(yaw) * std::cos(pitch)), float(std::sin(pitch)), float(-std::cos(yaw) * std::cos(pitch))};
 }
 
 bool
@@ -198,6 +268,8 @@ EyeGazeReader::run()
 				continue;
 			}
 		}
+
+		correct(&dir);
 
 		std::lock_guard lk(mut);
 		direction = dir;

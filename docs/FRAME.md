@@ -33,3 +33,30 @@ cd ../frame-monado-host
 
 The headset shell/client/server/UI live separately in `frame-shell`. Building or deploying that repository
 does not build or replace the headset Monado runtime.
+
+## Settings
+
+Runtime settings that stay go in the `frame` object of Monado's config file, `~/.config/monado/config_v0.json`
+on the headset, read when the compositor starts (restart `monado.service` after editing):
+
+```json
+{
+  "frame": {
+    "passthrough_scratch_scale": 0.5,
+    "passthrough_behind_opaque": false
+  }
+}
+```
+
+- `passthrough_scratch_scale` (0–1, default 0.5): size of the scratch images while they only hold passthrough.
+  The cameras resolve about 330 px/rad against about 1100 on the panel; 0.35 is visibly softer.
+- `passthrough_behind_opaque` (default false): keep the cameras and passthrough running while an opaque
+  projection layer (a PC VR stream without alpha) hides them. Off saves ~0.8 W while streaming.
+
+`monado.service` caps the GPU clock at 578 MHz for the session and restores the top clock afterwards.
+
+The eye gaze is corrected with `~/.config/frame-shell/eye-calibration`, which the frame shell keeps fitting from
+pointer clicks (the user looks at what they click): `corrected = (measured - offset) / gain` per axis in degrees,
+reread within a second. Valve's eye tracking service only calibrates itself from SteamVR's UI clicks, so without it
+the gaze keeps its generic model (measured about 7° too high and 1.2× too steep vertically). Delete the file to start
+over.

@@ -46,6 +46,10 @@ struct chl_frame_state
 	struct comp_render_dispatch_data data;
 
 	struct render_compute cs;
+
+	//! Fraction of the scratch images' width and height the graphics squash draws into and the distortion samples,
+	//! below 1 when they only hold low resolution content (the passthrough cameras).
+	float squash_scale;
 };
 
 

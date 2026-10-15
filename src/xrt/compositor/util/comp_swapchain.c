@@ -23,6 +23,7 @@
 #include "vk/vk_helpers.h"
 #include "vk/vk_mini_helpers.h"
 
+#include "util/comp_render.h"
 #include "util/comp_swapchain.h"
 
 #include <stdio.h>
@@ -204,6 +205,10 @@ swapchain_release_image(struct xrt_swapchain *xsc, uint32_t index)
 	struct comp_swapchain *sc = comp_swapchain(xsc);
 
 	VK_TRACE(sc->vk, "RELEASE_IMAGE");
+
+	if (index < sc->base.base.image_count) {
+		__atomic_fetch_add(&sc->images[index].release_count, 1, __ATOMIC_RELEASE);
+	}
 
 	int res = u_index_fifo_push(&sc->fifo, index);
 
@@ -639,6 +644,11 @@ comp_swapchain_teardown(struct comp_swapchain *sc)
 
 	for (uint32_t i = 0; i < sc->base.base.image_count; i++) {
 		image_cleanup(vk, &sc->images[i]);
+	}
+
+	// image_cleanup waited for the GPU
+	for (uint32_t i = 0; i < sc->vkic.image_count; i++) {
+		comp_render_gfx_forget_image(vk, sc->vkic.images[i].handle);
 	}
 
 	for (uint32_t i = 0; i < sc->base.base.image_count; i++) {

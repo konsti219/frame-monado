@@ -497,6 +497,13 @@ comp_render_gfx_dispatch(struct render_gfx *render,
                          const uint32_t layer_count,
                          const struct comp_render_dispatch_data *d);
 
+/*!
+ * Frees the quad layers' mip copies of @p src (its handle may be reused once it is destroyed), or of every image
+ * with VK_NULL_HANDLE. Call with the GPU idle.
+ */
+void
+comp_render_gfx_forget_image(struct vk_bundle *vk, VkImage src);
+
 /* end of comp_render_gfx group */
 
 /*! @} */

@@ -262,6 +262,8 @@ struct quad_mip
 
 	uint64_t used_frame;
 	uint64_t copied_frame;
+	//! The source image's release count when it was last copied, UINT64_MAX before the first copy.
+	uint64_t copied_release;
 };
 
 static struct quad_mip quad_mips[QUAD_MIP_CACHE_SIZE];
@@ -282,6 +284,16 @@ quad_mip_destroy(struct vk_bundle *vk, struct quad_mip *m)
 		vk->vkFreeMemory(vk->device, m->memory, NULL);
 	}
 	*m = (struct quad_mip){0};
+}
+
+void
+comp_render_gfx_forget_image(struct vk_bundle *vk, VkImage src)
+{
+	for (uint32_t i = 0; i < QUAD_MIP_CACHE_SIZE; i++) {
+		if (quad_mips[i].image != VK_NULL_HANDLE && (src == VK_NULL_HANDLE || quad_mips[i].src == src)) {
+			quad_mip_destroy(vk, &quad_mips[i]);
+		}
+	}
 }
 
 static struct quad_mip *
@@ -365,6 +377,7 @@ quad_mip_get(struct vk_bundle *vk, VkImage src, uint32_t src_layer, VkExtent2D e
 	slot->levels = levels;
 	slot->used_frame = quad_mip_frame;
 	slot->copied_frame = 0;
+	slot->copied_release = UINT64_MAX;
 	return slot;
 }
 
@@ -393,17 +406,19 @@ quad_mip_barrier(struct vk_bundle *vk,
 	                            dst_stage, range);
 }
 
-/// Copies the quad's image into a box filtered mip chain, like SteamVR does every frame.
+/// Copies the quad's image into a box filtered mip chain, like SteamVR does every frame, but only when the client
+/// released new contents into it since the last copy.
 static void
-quad_mip_record(struct vk_bundle *vk, VkCommandBuffer cmd, struct quad_mip *m)
+quad_mip_record(struct vk_bundle *vk, VkCommandBuffer cmd, struct quad_mip *m, uint64_t release)
 {
 	const VkPipelineStageFlags read_stages =
 	    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 
-	if (m->copied_frame == quad_mip_frame) {
+	if (m->copied_frame == quad_mip_frame || m->copied_release == release) {
 		return;
 	}
 	m->copied_frame = quad_mip_frame;
+	m->copied_release = release;
 
 	quad_mip_barrier(vk, cmd, m->src, 0, 1, m->src_layer, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
 	                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, read_stages,
@@ -684,8 +699,50 @@ crg_clear_output(struct render_gfx *render, const struct comp_render_dispatch_da
  */
 
 /// Quad or cylinder layer drawn in the distortion pass: maps the scratch NDC the mesh samples back onto the layer.
+/// Panel position (target pixels) of a clip space point, through the inverse distortion table.
+static void
+quad_direct_scissor_point(const struct render_resources *r,
+                          const struct comp_render_dispatch_data *d,
+                          uint32_t view,
+                          float cx,
+                          float cy,
+                          float cw,
+                          float *min_x,
+                          float *min_y,
+                          float *max_x,
+                          float *max_y)
+{
+	const struct render_viewport_data *vp = &d->views[view].target.viewport_data;
+	const struct xrt_matrix_2x2 *rot = &d->views[view].target.gfx.vertex_rot;
+	const int n = RENDER_MESH_INVERSE_SIZE;
+
+	// Scratch uv to table cell (bilinear), clamped to the mesh.
+	float gx = CLAMP((cx / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+	float gy = CLAMP((cy / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+	int x0 = MIN((int)gx, n - 2), y0 = MIN((int)gy, n - 2);
+	float fx = gx - (float)x0, fy = gy - (float)y0;
+	const struct xrt_vec2 *a = &r->mesh.inverse[view][y0][x0];
+	const struct xrt_vec2 *b = &r->mesh.inverse[view][y0][x0 + 1];
+	const struct xrt_vec2 *c = &r->mesh.inverse[view][y0 + 1][x0];
+	const struct xrt_vec2 *dd = &r->mesh.inverse[view][y0 + 1][x0 + 1];
+	float px = (a->x * (1 - fx) + b->x * fx) * (1 - fy) + (c->x * (1 - fx) + dd->x * fx) * fy;
+	float py = (a->y * (1 - fx) + b->y * fx) * (1 - fy) + (c->y * (1 - fx) + dd->y * fx) * fy;
+
+	// Mesh position to target pixels, like mesh.vert.
+	float ox = rot->v[0] * px + rot->v[2] * py;
+	float oy = rot->v[1] * px + rot->v[3] * py;
+	float sx = (float)vp->x + (ox * 0.5f + 0.5f) * (float)vp->w;
+	float sy = (float)vp->y + (oy * 0.5f + 0.5f) * (float)vp->h;
+	*min_x = MIN(*min_x, sx);
+	*min_y = MIN(*min_y, sy);
+	*max_x = MAX(*max_x, sx);
+	*max_y = MAX(*max_y, sy);
+}
+
 /// Panel scissor around a layer: its outline (model space points through mvp) through the inverse distortion table,
-/// with a margin for timewarp.
+/// with a margin for timewarp. Layers crossing the eye plane are clipped just in front of it along the segments between
+/// each outline point and the next two: a quad's outline runs around its edge, a cylinder's alternates between its
+/// arcs (so neighbours are its vertical lines and two apart its arcs and sides).
 static void
 quad_direct_scissor(const struct render_resources *r,
                     const struct xrt_matrix_4x4 *mvp,
@@ -702,51 +759,48 @@ quad_direct_scissor(const struct render_resources *r,
 	}
 
 	const struct render_viewport_data *vp = &d->views[view].target.viewport_data;
-	const struct xrt_matrix_2x2 *rot = &d->views[view].target.gfx.vertex_rot;
-	const int n = RENDER_MESH_INVERSE_SIZE;
+	enum { MAX_OUTLINE = 128 };
+	const float near_w = 1e-3f;
+	float clip[MAX_OUTLINE][3];
+	int count = MIN(outline_count, MAX_OUTLINE);
 	float min_x = INFINITY, min_y = INFINITY, max_x = -INFINITY, max_y = -INFINITY;
 	int behind = 0;
 
-	for (int i = 0; i < outline_count; i++) {
+	for (int i = 0; i < count; i++) {
 		const struct xrt_vec3 *o = &outline[i];
-		float cx = mvp->v[0] * o->x + mvp->v[4] * o->y + mvp->v[8] * o->z + mvp->v[12];
-		float cy = mvp->v[1] * o->x + mvp->v[5] * o->y + mvp->v[9] * o->z + mvp->v[13];
-		float cw = mvp->v[3] * o->x + mvp->v[7] * o->y + mvp->v[11] * o->z + mvp->v[15];
-		if (cw <= 1e-4f) {
+		clip[i][0] = mvp->v[0] * o->x + mvp->v[4] * o->y + mvp->v[8] * o->z + mvp->v[12];
+		clip[i][1] = mvp->v[1] * o->x + mvp->v[5] * o->y + mvp->v[9] * o->z + mvp->v[13];
+		clip[i][2] = mvp->v[3] * o->x + mvp->v[7] * o->y + mvp->v[11] * o->z + mvp->v[15];
+		if (clip[i][2] <= near_w) {
 			behind++;
 			continue;
 		}
-
-		// Scratch uv to table cell (bilinear), clamped to the mesh.
-		float gx = CLAMP((cx / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
-		float gy = CLAMP((cy / cw * 0.5f + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
-		int x0 = MIN((int)gx, n - 2), y0 = MIN((int)gy, n - 2);
-		float fx = gx - (float)x0, fy = gy - (float)y0;
-		const struct xrt_vec2 *a = &r->mesh.inverse[view][y0][x0];
-		const struct xrt_vec2 *b = &r->mesh.inverse[view][y0][x0 + 1];
-		const struct xrt_vec2 *c = &r->mesh.inverse[view][y0 + 1][x0];
-		const struct xrt_vec2 *dd = &r->mesh.inverse[view][y0 + 1][x0 + 1];
-		float px = (a->x * (1 - fx) + b->x * fx) * (1 - fy) + (c->x * (1 - fx) + dd->x * fx) * fy;
-		float py = (a->y * (1 - fx) + b->y * fx) * (1 - fy) + (c->y * (1 - fx) + dd->y * fx) * fy;
-
-		// Mesh position to target pixels, like mesh.vert.
-		float ox = rot->v[0] * px + rot->v[2] * py;
-		float oy = rot->v[1] * px + rot->v[3] * py;
-		float sx = (float)vp->x + (ox * 0.5f + 0.5f) * (float)vp->w;
-		float sy = (float)vp->y + (oy * 0.5f + 0.5f) * (float)vp->h;
-		min_x = MIN(min_x, sx);
-		min_y = MIN(min_y, sy);
-		max_x = MAX(max_x, sx);
-		max_y = MAX(max_y, sy);
+		quad_direct_scissor_point(r, d, view, clip[i][0], clip[i][1], clip[i][2], &min_x, &min_y, &max_x, &max_y);
 	}
 
-	if (behind == outline_count) {
+	if (behind == count) {
 		out->w = 0; // All behind the eye.
 		out->h = 0;
 		return;
 	}
 	if (behind > 0) {
-		return; // Crosses the eye plane, keep the whole view.
+		for (int i = 0; i < count; i++) {
+			for (int step = 1; step <= 2 && i + step < count; step++) {
+				int f = i, b = i + step;
+				if (clip[f][2] <= near_w) {
+					f = i + step;
+					b = i;
+				}
+				if (clip[f][2] <= near_w || clip[b][2] > near_w) {
+					continue; // Both on the same side
+				}
+				// Slightly in front of the plane, so the point still projects.
+				float t = (clip[f][2] - 2.0f * near_w) / (clip[f][2] - clip[b][2]);
+				float cx = clip[f][0] + t * (clip[b][0] - clip[f][0]);
+				float cy = clip[f][1] + t * (clip[b][1] - clip[f][1]);
+				quad_direct_scissor_point(r, d, view, cx, cy, 2.0f * near_w, &min_x, &min_y, &max_x, &max_y);
+			}
+		}
 	}
 
 	// Timewarp turns the view by up to the rotation between scanout begin and end; pixels per radian at the centre
@@ -1016,6 +1070,14 @@ projection_mesh_views(struct render_gfx *render,
 }
 
 /// Used in both fast-path and layer-squashed routes
+/// Whether an opaque projection layer drawn in the distortion pass covers the scratch images, which then hold nothing.
+static bool
+scratch_hidden(const struct comp_layer *projection, const struct comp_render_dispatch_data *d)
+{
+	return projection != NULL && !d->passthrough &&
+	       (projection->data.flags & XRT_LAYER_COMPOSITION_BLEND_TEXTURE_SOURCE_ALPHA_BIT) == 0;
+}
+
 static void
 crg_distortion_common(struct render_gfx *render,
                       bool do_timewarp,
@@ -1093,11 +1155,13 @@ crg_distortion_common(struct render_gfx *render,
 		    viewport_data,     //
 		    scissor_data);     //
 
-		render_gfx_mesh_draw(      //
-		    render,                //
-		    i,                     // mesh_index
-		    ms.descriptor_sets[i], //
-		    do_timewarp);          //
+		if (!scratch_hidden(md->projection, d)) {
+			render_gfx_mesh_draw(      //
+			    render,                //
+			    i,                     // mesh_index
+			    ms.descriptor_sets[i], //
+			    do_timewarp);          //
+		}
 
 		if (md->projection != NULL) {
 			// Without source alpha the layer is opaque (the plain mesh shader writes alpha 1)
@@ -1189,7 +1253,8 @@ crg_distortion_after_squash(struct render_gfx *render,
 		if (m == NULL) {
 			continue;
 		}
-		quad_mip_record(render->r->vk, render->r->cmd, m);
+		uint64_t release = __atomic_load_n(&sc->images[sub->image_index].release_count, __ATOMIC_ACQUIRE);
+		quad_mip_record(render->r->vk, render->r->cmd, m, release);
 		md.quad_views[q][0] = m->views[0];
 		md.quad_views[q][1] = m->views[1];
 	}
@@ -1384,10 +1449,16 @@ comp_render_gfx_layers(struct render_gfx *render,
 		// Convenience.
 		const struct render_viewport_data *viewport_data = &d->views[view].squash.viewport_data;
 
-		render_gfx_begin_target(           //
+		// Only the part of the scratch image that is drawn, see chl_frame_state::squash_scale
+		const VkRect2D squash_area = {
+		    .offset = {(int32_t)viewport_data->x, (int32_t)viewport_data->y},
+		    .extent = {viewport_data->w, viewport_data->h},
+		};
+		render_gfx_begin_target_area(      //
 		    render,                        //
 		    d->views[view].squash.gfx.rtr, //
-		    color);                        //
+		    color,                         //
+		    &squash_area);                 //
 
 		render_gfx_begin_view( //
 		    render,            //
@@ -1540,12 +1611,14 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 		/*
 		 * Layer squashing.
 		 */
-		comp_render_gfx_layers( //
-		    render,             //
-		    squashed,           //
-		    squash_count,       //
-		    d,                  //
-		    transition_to);     //
+		if (!scratch_hidden(projection, d)) {
+			comp_render_gfx_layers( //
+			    render,             //
+			    squashed,           //
+			    squash_count,       //
+			    d,                  //
+			    transition_to);     //
+		}
 
 		sf_comp_passthrough_trace(d->passthrough, d, layers, layer_count);
 

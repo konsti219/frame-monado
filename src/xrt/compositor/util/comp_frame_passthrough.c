@@ -86,6 +86,7 @@ struct pt_mesh
 	pthread_mutex_t floor_mutex;
 	pthread_cond_t floor_condition;
 	bool floor_started, floor_running, floor_pending;
+	uint64_t floor_seq; // newest block only fed to the floor estimate, without passthrough drawn
 	float floor_pending_pose[12];
 	double floor_pending_time;
 	double floor_sample_time, floor_log_time;
@@ -102,6 +103,7 @@ struct sf_comp_passthrough
 	// Stream chosen for the next frame and the one the textures currently hold (SF_PT_TYPE_*)
 	int type, shown;
 	uint64_t want_ns;
+	uint64_t floor_poll_ns, floor_wanted_until; // CLOCK_MONOTONIC, from $XDG_RUNTIME_DIR/frame-shell-floor-wanted
 	PFN_vkGetMemoryFdPropertiesKHR get_fd_properties;
 	int pid;
 	uint64_t prepare_ns, prepare_count, log_ns;
@@ -356,6 +358,40 @@ choose_stream(struct sf_comp_passthrough *pt, uint64_t now)
 	if (now - pt->want_ns < 1000000000ull)
 		return pt->type;
 	return SF_PT_TYPE_TRACKING;
+}
+
+static void
+mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd);
+
+bool
+sf_comp_passthrough_floor_wanted(struct sf_comp_passthrough *pt)
+{
+	if (!pt)
+		return false;
+	uint64_t now = os_monotonic_get_ns();
+	if (now - pt->floor_poll_ns >= 250000000ull) {
+		pt->floor_poll_ns = now;
+		pt->floor_wanted_until = 0;
+		const char *runtime = getenv("XDG_RUNTIME_DIR");
+		char path[512];
+		FILE *f = NULL;
+		if (runtime && snprintf(path, sizeof(path), "%s/frame-shell-floor-wanted", runtime) < (int)sizeof(path))
+			f = fopen(path, "r");
+		if (f) {
+			unsigned long long until;
+			if (fscanf(f, "%llu", &until) == 1)
+				pt->floor_wanted_until = until;
+			fclose(f);
+		}
+	}
+	return now < pt->floor_wanted_until;
+}
+
+void
+sf_comp_passthrough_update_floor(struct sf_comp_passthrough *pt)
+{
+	if (pt && pt->wanted && pt->shm)
+		mesh_update(pt, VK_NULL_HANDLE);
 }
 
 bool
@@ -1006,9 +1042,11 @@ floor_schedule(struct pt_mesh *m, const float pose[12], double now)
 	pthread_mutex_unlock(&m->floor_mutex);
 }
 
+// Without a command buffer only feeds the floor estimate
 static void
 mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 {
+	const bool upload = cmd != VK_NULL_HANDLE;
 	struct pt_mesh *m = &pt->mesh;
 	struct timespec raw;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &raw);
@@ -1022,7 +1060,8 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 	uint32_t header_size, data_size, index;
 	uint64_t seq;
 	const uint8_t *block = queue_newest(&m->data, &header_size, &data_size, &seq, &index);
-	if (!block || seq == m->seq || (uint64_t)m->width * m->height * 12 > data_size)
+	if (!block || seq == m->seq || (!upload && seq == m->floor_seq) ||
+	    (uint64_t)m->width * m->height * 12 > data_size)
 		return;
 	const double *time = queue_property(block, header_size, "/meshData/posePredictionBaseTime", 8);
 	const float *pose = queue_property(block, header_size, "/meshData/rawFromMeshPose", 48);
@@ -1030,7 +1069,8 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 		return;
 	uint32_t vertices = m->width * m->height;
 	VkFormat format = pt->mesh_format;
-	if (!texture_create(pt, &m->depth, m->width, m->height, format == VK_FORMAT_R32_SFLOAT ? 4 : 2, format))
+	if (upload &&
+	    !texture_create(pt, &m->depth, m->width, m->height, format == VK_FORMAT_R32_SFLOAT ? 4 : 2, format))
 		return;
 	// The vertices lie on the rays of a pinhole grid (x/z linear in the column, y/z in the row): fit it while
 	// copying out the depths
@@ -1039,7 +1079,9 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 	double n = 0, sg[2] = {0}, sgg[2] = {0}, sa[2] = {0}, sga[2] = {0};
 	for (uint32_t i = 0; i < vertices; i++) {
 		float z = v[i * 3 + 2];
-		if (format == VK_FORMAT_R32_SFLOAT)
+		if (!upload)
+			;
+		else if (format == VK_FORMAT_R32_SFLOAT)
 			((float *)m->depth.staging.data)[i] = z;
 		else
 			((uint16_t *)m->depth.staging.data)[i] = half_from_float(z);
@@ -1069,6 +1111,9 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 	if (!isfinite(focal[0]) || !isfinite(focal[1]) || focal[0] <= 0 || fabs(focal[0] / focal[1] - 1) > 0.02)
 		return;
 	floor_schedule(m, pose_copy, now);
+	m->floor_seq = seq;
+	if (!upload)
+		return;
 	texture_upload(pt, &m->depth, cmd, VK_NULL_HANDLE, 0, 0);
 	m->focal = (focal[0] + focal[1]) / 2;
 	m->cx = centre[0];

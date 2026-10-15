@@ -33,6 +33,7 @@
 
 #include "util/comp_render.h"
 #include "util/comp_frame_passthrough.h"
+#include "util/u_config_json.h"
 #include "util/comp_high_level_render.h"
 
 #include "main/comp_frame.h"
@@ -180,6 +181,82 @@ struct comp_renderer
  * Functions.
  *
  */
+
+/// Whether a projection layer without source alpha covers the views.
+static bool
+has_opaque_projection(const struct comp_layer_accum *accum)
+{
+	for (uint32_t i = 0; i < accum->layer_count; i++) {
+		const struct xrt_layer_data *data = &accum->layers[i].data;
+		if ((data->type == XRT_LAYER_PROJECTION || data->type == XRT_LAYER_PROJECTION_DEPTH) &&
+		    (data->flags & XRT_LAYER_COMPOSITION_BLEND_TEXTURE_SOURCE_ALPHA_BIT) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/// Settings from the "frame" object in Monado's config file (~/.config/monado/config_v0.json):
+/// - "passthrough_scratch_scale" (0..1, default 0.5): size of the scratch images while they only hold passthrough;
+///   the cameras resolve ~330 px/rad against ~1100 on the panel, so half size keeps their detail (0.35 is visibly
+///   softer) while writing and sampling a quarter of the pixels
+/// - "passthrough_behind_opaque" (default false): keep the cameras running while an opaque projection layer (a PC
+///   VR stream without alpha) hides them
+struct frame_settings
+{
+	float passthrough_scratch_scale;
+	bool passthrough_behind_opaque;
+};
+
+static const struct frame_settings *
+frame_settings(void)
+{
+	static struct frame_settings settings;
+	static bool loaded = false;
+	if (loaded) {
+		return &settings;
+	}
+	loaded = true;
+	settings = (struct frame_settings){.passthrough_scratch_scale = 0.5f, .passthrough_behind_opaque = false};
+
+	struct u_config_json json = {0};
+	u_config_json_open_or_create_main_file(&json);
+	const cJSON *frame = json.root ? u_json_get(json.root, "frame") : NULL;
+	if (frame) {
+		float scale;
+		if (u_json_get_float(u_json_get(frame, "passthrough_scratch_scale"), &scale) && scale > 0.0f &&
+		    scale <= 1.0f) {
+			settings.passthrough_scratch_scale = scale;
+		}
+		u_json_get_bool(u_json_get(frame, "passthrough_behind_opaque"), &settings.passthrough_behind_opaque);
+	}
+	u_config_json_close(&json);
+	U_LOG_I("Passthrough scratch scale %.2f, behind opaque layers %s", settings.passthrough_scratch_scale,
+	        settings.passthrough_behind_opaque ? "on" : "off");
+	return &settings;
+}
+
+/// Whether the graphics squash would draw only passthrough into the scratch images: quads, cylinders and a single
+/// plain projection layer go straight into the distortion pass (see comp_render_gfx_dispatch).
+static bool
+passthrough_only_scratch(const struct comp_layer_accum *accum)
+{
+	const uint32_t unsupported = XRT_LAYER_COMPOSITION_VIEW_SPACE_BIT | XRT_LAYER_COMPOSITION_COLOR_BIAS_SCALE |
+	                             XRT_LAYER_COMPOSITION_ADVANCED_BLENDING_BIT | XRT_LAYER_COMPOSITION_DEPTH_TEST |
+	                             XRT_LAYER_COMPOSITION_INVERTED_ALPHA_BIT;
+	uint32_t others = 0;
+	for (uint32_t i = 0; i < accum->layer_count; i++) {
+		const struct xrt_layer_data *data = &accum->layers[i].data;
+		if (data->type == XRT_LAYER_QUAD || data->type == XRT_LAYER_CYLINDER) {
+			continue;
+		}
+		if ((data->type != XRT_LAYER_PROJECTION && data->type != XRT_LAYER_PROJECTION_DEPTH) ||
+		    (data->flags & unsupported) != 0 || ++others > 1) {
+			return false;
+		}
+	}
+	return true;
+}
 
 static void
 renderer_wait_queue_idle(struct comp_renderer *r)
@@ -1139,8 +1216,16 @@ comp_renderer_draw(struct comp_renderer *r)
 
 	if (!r->passthrough && !r->settings->use_compute) r->passthrough = sf_comp_passthrough_create(&c->base.vk);
 	const char *force_pt = getenv("SF_PASSTHROUGH");
-	bool passthrough = sf_comp_passthrough_request(r->passthrough,
-	    c->base.layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND || (force_pt && !strcmp(force_pt, "1")));
+	// An opaque projection layer (a PC VR stream without alpha) hides the cameras: stop them meanwhile
+	bool draw_passthrough = c->base.layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND ||
+	                        (force_pt && !strcmp(force_pt, "1") &&
+	                         (frame_settings()->passthrough_behind_opaque || !has_opaque_projection(&c->base.layer_accum)));
+	// The floor estimate needs the cameras too, also while passthrough is hidden
+	bool cameras = sf_comp_passthrough_request(
+	    r->passthrough, draw_passthrough || sf_comp_passthrough_floor_wanted(r->passthrough));
+	bool passthrough = cameras && draw_passthrough;
+	if (cameras && !passthrough)
+		sf_comp_passthrough_update_floor(r->passthrough);
 	bool fast_path = c->base.frame_params.one_projection_layer_fast_path && !passthrough;
 	bool do_timewarp = !c->debug.atw_off;
 
@@ -1158,6 +1243,9 @@ comp_renderer_draw(struct comp_renderer *r)
 	    &c->scratch);     //
 
 	frame_state.data.passthrough = passthrough ? r->passthrough : NULL;
+	frame_state.squash_scale = passthrough_only_scratch(&c->base.layer_accum)
+	                               ? frame_settings()->passthrough_scratch_scale
+	                               : 1.0f;
 	frame_state.data.pose_timestamp_ns = c->frame.rendering.predicted_display_time_ns;
 
 	bool use_compute = r->settings->use_compute;

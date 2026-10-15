@@ -1095,6 +1095,17 @@ render_gfx_begin_target(struct render_gfx *render,
                         const VkClearColorValue *color);
 
 /*!
+ * @ref render_gfx_begin_target limited to @p area: on tiling GPUs only those tiles are cleared and stored.
+ *
+ * @public @memberof render_gfx
+ */
+bool
+render_gfx_begin_target_area(struct render_gfx *render,
+                             struct render_gfx_target_resources *rtr,
+                             const VkClearColorValue *color,
+                             const VkRect2D *area);
+
+/*!
  * @pre successful @ref render_gfx_begin_target call,
  *   no @ref render_gfx_begin_view without matching @ref render_gfx_end_view
  * @public @memberof render_gfx

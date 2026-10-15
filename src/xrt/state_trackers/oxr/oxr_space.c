@@ -403,7 +403,9 @@ oxr_spaces_locate(struct oxr_logger *log,
 				U_ZERO(&vels->velocities[i].angularVelocity);
 			}
 
-			oxr_slog(&slog, "\n\tReturning invalid pose locations->locations[%d]", i);
+			if (print) {
+				oxr_slog(&slog, "\n\tReturning invalid pose locations->locations[%d]", i);
+			}
 		} else {
 
 			/*
@@ -435,7 +437,9 @@ oxr_spaces_locate(struct oxr_logger *log,
 				}
 			}
 
-			oxr_pp_relation_indented(&slog, &results[i], "relation");
+			if (print) {
+				oxr_pp_relation_indented(&slog, &results[i], "relation");
+			}
 		}
 	}
 

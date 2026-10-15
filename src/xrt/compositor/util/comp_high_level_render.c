@@ -20,6 +20,16 @@
  *
  */
 
+static uint32_t
+squash_extent(uint32_t size, float scale)
+{
+	if (!(scale > 0.0f && scale < 1.0f)) {
+		return size;
+	}
+	uint32_t res = (uint32_t)((float)size * scale + 0.5f);
+	return res < 1 ? 1 : res;
+}
+
 void
 chl_frame_state_init(struct chl_frame_state *frame_state,
                      struct render_resources *rr,
@@ -35,6 +45,7 @@ chl_frame_state_init(struct chl_frame_state *frame_state,
 	U_ZERO(frame_state);
 	frame_state->view_count = view_count;
 	frame_state->scratch = scratch;
+	frame_state->squash_scale = 1.0f;
 
 	comp_render_initial_init( //
 	    &frame_state->data,   // data
@@ -84,12 +95,12 @@ chl_frame_state_gfx_set_views(struct chl_frame_state *frame_state,
 		// Scratch color image.
 		struct render_scratch_color_image *rsci = &scratch_view->images[scratch_index];
 
-		// Use the whole scratch image.
+		// The whole scratch image, or the scaled down part of it.
 		struct render_viewport_data layer_viewport_data = {
 		    .x = 0,
 		    .y = 0,
-		    .w = scratch_view->info.width,
-		    .h = scratch_view->info.height,
+		    .w = squash_extent(scratch_view->info.width, frame_state->squash_scale),
+		    .h = squash_extent(scratch_view->info.height, frame_state->squash_scale),
 		};
 
 		comp_render_gfx_add_squash_view(   //
@@ -127,8 +138,15 @@ chl_frame_state_gfx_set_target(struct chl_frame_state *frame_state,
 		// The set of scratch images we are using for this view.
 		struct comp_scratch_single_images *scratch_view = &frame_state->scratch->views[i].cssi;
 
-		// Scratch image covers the whole image.
-		struct xrt_normalized_rect layer_norm_rect = {.x = 0.0f, .y = 0.0f, .w = 1.0f, .h = 1.0f};
+		// The part of the scratch image the squash drew.
+		struct xrt_normalized_rect layer_norm_rect = {
+		    .x = 0.0f,
+		    .y = 0.0f,
+		    .w = (float)squash_extent(scratch_view->info.width, frame_state->squash_scale) /
+		         (float)scratch_view->info.width,
+		    .h = (float)squash_extent(scratch_view->info.height, frame_state->squash_scale) /
+		         (float)scratch_view->info.height,
+		};
 
 		VkImageView sample_view = comp_scratch_single_images_get_sample_view(scratch_view, scratch_index);
 

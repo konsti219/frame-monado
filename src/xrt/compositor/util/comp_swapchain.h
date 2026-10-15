@@ -73,6 +73,9 @@ struct comp_swapchain_image
 
 	//! A mutex per swapchain image that is used with @ref use_cond.
 	struct os_mutex use_mutex;
+
+	//! Times the client released this image, so the renderer can tell when its contents changed.
+	uint64_t release_count;
 };
 
 /*!

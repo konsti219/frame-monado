@@ -1077,6 +1077,15 @@ render_gfx_begin_target(struct render_gfx *render,
                         struct render_gfx_target_resources *rtr,
                         const VkClearColorValue *color)
 {
+	return render_gfx_begin_target_area(render, rtr, color, &rtr->render_area);
+}
+
+bool
+render_gfx_begin_target_area(struct render_gfx *render,
+                             struct render_gfx_target_resources *rtr,
+                             const VkClearColorValue *color,
+                             const VkRect2D *area)
+{
 	struct vk_bundle *vk = vk_from_render(render);
 
 	assert(render->rtr == NULL);
@@ -1084,7 +1093,7 @@ render_gfx_begin_target(struct render_gfx *render,
 
 	VkRenderPass render_pass = rtr->rgrp->render_pass;
 	VkFramebuffer framebuffer = rtr->framebuffer;
-	const VkRect2D *render_area = &rtr->render_area;
+	const VkRect2D *render_area = area;
 
 	begin_render_pass(  //
 	    vk,             //

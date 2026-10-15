@@ -15,9 +15,10 @@ Environment=LH_DISCOVER_WAIT_MS=15000
 # 140% render scale
 Environment=XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3 XRT_COMPOSITOR_COMPUTE=0 XRT_COMPOSITOR_DESIRED_MODE=6
 Environment=XRT_COMPOSITOR_SCALE_PERCENTAGE=100
-# Turnip's autotune renders the distortion pass from system memory once quads are blended into it (SteamVR's way of
-# drawing quads, see comp_render_gfx.c); tile memory is ~1 ms faster there and about even elsewhere
-Environment=TU_DEBUG=gmem
+# The distortion pass from system memory rather than tile memory: with quads scissored to their outline and
+# passthrough in a half-size scratch image it needs ~0.4 ms less GPU time while streaming (same power) and ~0.15 W
+# less at idle; Turnip's autotune picks tile memory for it
+Environment=TU_DEBUG=sysmem
 # Headset backlight and battery straight from sysfs instead of through driver_cv
 Environment=STEAMVR_LH_BACKLIGHT=/sys/class/backlight/ae94000.dsi.0 STEAMVR_LH_BATTERY=/sys/class/power_supply/max1720x_bat_7-36
 # Present to photons: the panel's 10.7 ms vsync-to-photons from driver_cv's device config. That holds only while
@@ -46,5 +47,10 @@ ExecStartPre=/bin/ln -f %h/.local/opt/monado/bin/monado-service %h/sf/rt/bin/lin
 # SteamVR's display chromatic aberration correction (CAC_BLOB on the CRTC, copied from a SteamVR session at 72 Hz):
 # Monado uses green distortion for all colours; the display corrects colour fringes.
 ExecStartPre=-/bin/sh -c 'sudo -n %h/sf/kmscac/kmscac set "$$(cat %h/sf/frame-monado/cac_blob_72hz.hex)"'
+# msm's simple_ondemand goes to the top GPU clock (903 MHz) whenever a 50 ms window is half busy, which the stream's
+# compositing alone keeps doing at ~30% load; 578 MHz still leaves the compositor several ms of headroom and saves ~1 W
+# while streaming. The top clock is restored for whatever runs after this session.
+ExecStartPre=-/usr/bin/sudo -n /bin/sh -c 'echo 578000000 > /sys/class/devfreq/3d00000.gpu/max_freq'
+ExecStopPost=-/usr/bin/sudo -n /bin/sh -c 'tr " " "\\n" < /sys/class/devfreq/3d00000.gpu/available_frequencies | sort -n | tail -1 > /sys/class/devfreq/3d00000.gpu/max_freq'
 # Started from the SteamVR-shaped layout, since driver_cv finds XRService relative to the executable
 ExecStart=%h/sf/rt/bin/linuxarm64/monado-service
