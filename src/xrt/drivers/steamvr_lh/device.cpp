@@ -751,7 +751,7 @@ ControllerDevice::update_skeleton_transforms(std::span<const vr::VRBoneTransform
 
 	assert(bones.size() == eBone_Count);
 
-	xrt_hand_joint_set joint_set;
+	xrt_hand_joint_set joint_set{};
 	int64_t timestamp;
 	if (!m_relation_history_get_latest(relation_hist, &timestamp, &joint_set.hand_pose)) {
 		return;
@@ -817,6 +817,7 @@ ControllerDevice::update_skeleton_transforms(std::span<const vr::VRBoneTransform
 	                       joints[XRT_HAND_JOINT_MIDDLE_PROXIMAL].relation.pose);
 
 	u_hand_joints_apply_joint_width(&joint_set);
+	std::lock_guard lock(joint_history_mutex);
 	this->joint_history.push_back(JointsWithTimestamp{joint_set, timestamp});
 }
 
@@ -888,6 +889,7 @@ ControllerDevice::get_hand_tracking(enum xrt_input_name name,
 		return XRT_ERROR_NOT_IMPLEMENTED;
 	}
 
+	std::lock_guard lock(joint_history_mutex);
 	// No handtracking data?
 	if (joint_history.empty()) {
 		out_value->is_active = false;

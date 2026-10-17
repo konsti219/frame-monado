@@ -296,6 +296,7 @@ private:
 		xrt_hand_joint_set joint_set;
 		int64_t timestamp{0};
 	};
+	std::mutex joint_history_mutex;
 	xrt::auxiliary::util::HistoryBuffer<JointsWithTimestamp, 5> joint_history;
 
 	vr::ETrackedPropertyError
