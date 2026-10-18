@@ -13,7 +13,7 @@ start)
     # The highest available clock at or below the setting
     hz=$(tr ' ' '\n' < $g/available_frequencies | awk -v max="$((mhz * 1000000))" '$1 <= max' | sort -n | tail -1)
     [ -n "$hz" ] && echo "$hz" | sudo -n tee $g/max_freq > /dev/null
-    [ "$(setting stop_sched_ext true)" = true ] && sudo -n systemctl stop scx.service
+    [ "$(setting stop_sched_ext false)" = true ] && sudo -n systemctl stop scx.service
     ;;
 stop)
     tr ' ' '\n' < $g/available_frequencies | sort -n | tail -1 | sudo -n tee $g/max_freq > /dev/null

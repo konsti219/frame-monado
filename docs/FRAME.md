@@ -45,7 +45,7 @@ on the headset, read when the compositor starts (restart `monado.service` after 
     "passthrough_scratch_scale": 0.5,
     "passthrough_behind_opaque": false,
     "gpu_max_mhz": 578,
-    "stop_sched_ext": true
+    "stop_sched_ext": false
   }
 }
 ```
@@ -61,10 +61,9 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   distortion pass expands it through per-axis lookup tables (`mesh_foveated.frag`), so the frame shell's client
   doesn't expand its stream to the full render size first. Opaque layers on the direct paths only; a squashed one
   is shown unexpanded (logged once).
-- `stop_sched_ext` (default true): stop SteamOS's `scx_lavd` scheduler for the session (started again afterwards).
-  lavd keeps the CPU clusters near their top clocks at 20–30% load; the kernel's default scheduler with schedutil
-  saves ~0.25 W of CPU (0.1–0.3 W total) in the spin test with no more late frames. Realtime threads (compositor,
-  Valve's tracking) aren't scheduled by sched_ext either way.
+- `stop_sched_ext` (default false): stop SteamOS's `scx_lavd` scheduler for the session (started again afterwards).
+  Saves ~0.25 W of CPU, but the frame shell's client then delivers ~6% of its frames too late for Monado (reused,
+  a visible jump with motion) against ~0.4% under lavd.
 
 The eye gaze is corrected with `~/.config/frame-shell/eye-calibration`, which the frame shell keeps fitting from
 pointer clicks (the user looks at what they click): `corrected = (measured - offset) / gain` per axis in degrees,
