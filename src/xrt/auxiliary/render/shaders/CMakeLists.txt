@@ -21,6 +21,7 @@ set(SHADERS
     mesh.frag
     mesh_projection.frag
     mesh_quad.frag
+    mesh_foveated.frag
     mesh.vert
     layer_cylinder.frag
     layer_cylinder.vert

@@ -58,6 +58,10 @@ on the headset, read when the compositor starts (restart `monado.service` after 
 - `gpu_max_mhz` (default 422): GPU clock cap for the session, applied by `monado.service` (restored afterwards).
   Under the spin test, 422 against 578 MHz saves ~0.3 W with no late frames and ~0.7 ms longer compositor budget;
   366 saves nothing more.
+- Projection layers can carry a foveated image (`XR_FRAME_foveated_projection`, chained to the projection view): the
+  distortion pass expands it through per-axis lookup tables (`mesh_foveated.frag`), so the frame shell's client
+  doesn't expand its stream to the full render size first. Opaque layers on the direct paths only; a squashed one
+  is shown unexpanded (logged once).
 - `stop_sched_ext` (default true): stop SteamOS's `scx_lavd` scheduler for the session (started again afterwards).
   lavd keeps the CPU clusters near their top clocks at 20–30% load; the kernel's default scheduler with schedutil
   saves ~0.25 W of CPU (0.1–0.3 W total) in the spin test with no more late frames. Realtime threads (compositor,

@@ -808,6 +808,12 @@ render_gfx_render_pass_init(struct render_gfx_render_pass *rgrp,
 			                           r->shaders->mesh_projection_frag, &rgrp->mesh.projection_pipelines[tw][pm]);
 			VK_CHK_WITH_RET(ret, "create_mesh_pipeline", false);
 		}
+		struct mesh_params foveated_params = {.do_timewarp = tw};
+		ret = create_mesh_pipeline(vk, rgrp->render_pass, r->mesh.pipeline_layout, r->pipeline_cache,
+		                           r->mesh.src_binding, r->mesh.index_count_total, r->mesh.stride, &foveated_params,
+		                           &no_blend, r->shaders->mesh_vert, r->shaders->mesh_foveated_frag,
+		                           &rgrp->mesh.foveated_pipelines[tw]);
+		VK_CHK_WITH_RET(ret, "create_mesh_pipeline", false);
 	}
 
 	const VkBlendFactor blend_factor_premultiplied_alpha = VK_BLEND_FACTOR_ONE;
@@ -917,6 +923,7 @@ render_gfx_render_pass_fini(struct render_gfx_render_pass *rgrp)
 			D(Pipeline, rgrp->mesh.quad_pipelines[tw][pm]);
 			D(Pipeline, rgrp->mesh.projection_pipelines[tw][pm]);
 		}
+		D(Pipeline, rgrp->mesh.foveated_pipelines[tw]);
 	}
 
 	D(Pipeline, rgrp->layer.cylinder_premultiplied_alpha);
@@ -1313,6 +1320,30 @@ render_gfx_mesh_projection_draw(struct render_gfx *render,
 {
 	mesh_draw_with_pipeline(render, mesh_index, descriptor_set,
 	                        render->rtr->rgrp->mesh.projection_pipelines[do_timewarp][premultiplied_alpha]);
+}
+
+XRT_CHECK_RESULT VkResult
+render_gfx_mesh_foveated_alloc_and_write(struct render_gfx *render,
+                                         const struct render_gfx_mesh_foveated_ubo_data *data,
+                                         VkSampler src_sampler,
+                                         VkImageView src_image_view,
+                                         VkDescriptorSet *out_descriptor_set)
+{
+	struct render_resources *r = render->r;
+
+	return do_ubo_and_src_alloc_and_write(render, r->mesh.ubo_binding, data, sizeof(*data), r->mesh.src_binding,
+	                                      src_sampler, src_image_view, r->gfx.ubo_and_src_descriptor_pool,
+	                                      r->mesh.descriptor_set_layout, out_descriptor_set);
+}
+
+void
+render_gfx_mesh_foveated_draw(struct render_gfx *render,
+                              uint32_t mesh_index,
+                              VkDescriptorSet descriptor_set,
+                              bool do_timewarp)
+{
+	mesh_draw_with_pipeline(render, mesh_index, descriptor_set,
+	                        render->rtr->rgrp->mesh.foveated_pipelines[do_timewarp]);
 }
 
 XRT_CHECK_RESULT VkResult

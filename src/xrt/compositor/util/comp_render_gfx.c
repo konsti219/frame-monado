@@ -98,6 +98,8 @@ struct gfx_mesh_view_data
 	struct xrt_normalized_rect src_norm_rect;
 	VkSampler src_sampler;
 	VkImageView src_image_view;
+	//! An opaque foveated projection view (x and y axes), or NULL.
+	const struct xrt_foveation_axis *foveation;
 };
 
 /*
@@ -154,6 +156,43 @@ gfx_mesh_add_view(struct gfx_mesh_data *md,
 	md->views[view_index].src_norm_rect = *src_norm_rect;
 	md->views[view_index].src_sampler = src_sampler;
 	md->views[view_index].src_image_view = src_image_view;
+	md->views[view_index].foveation = NULL;
+}
+
+static const struct xrt_foveation_axis *
+view_foveation(const struct xrt_layer_projection_view_data *v)
+{
+	return v->foveation[0].segment_count > 0 && v->foveation[1].segment_count > 0 ? v->foveation : NULL;
+}
+
+/// The segments of a foveated axis as normalized breakpoints from the view into the image.
+static int32_t
+foveation_points(const struct xrt_foveation_axis *axis, float out[RENDER_FOVEATION_MAX_POINTS][4])
+{
+	uint32_t n = MIN(axis->segment_count, XRT_MAX_FOVEATION_SEGMENTS);
+	double view_total = 0, image_total = 0;
+	for (uint32_t i = 0; i < n; i++) {
+		image_total += axis->counts[i];
+		view_total += axis->counts[i] * (abs((int)axis->center - (int)i) + 1);
+	}
+	if (image_total <= 0) {
+		out[0][0] = 0, out[0][1] = 0, out[1][0] = 1, out[1][1] = 1;
+		return 2;
+	}
+	double view = 0, image = 0;
+	int32_t count = 1;
+	out[0][0] = 0, out[0][1] = 0;
+	for (uint32_t i = 0; i < n; i++) {
+		if (axis->counts[i] == 0) {
+			continue;
+		}
+		view += axis->counts[i] * (abs((int)axis->center - (int)i) + 1);
+		image += axis->counts[i];
+		out[count][0] = (float)(view / view_total);
+		out[count][1] = (float)(image / image_total);
+		count++;
+	}
+	return count;
 }
 
 
@@ -1043,6 +1082,49 @@ mesh_ubo_data(const struct gfx_mesh_view_data *source,
 	return data;
 }
 
+/// The axis' breakpoints sampled uniformly over the view, for linear lookups in the shader.
+static void
+foveation_lut(const struct xrt_foveation_axis *axis, float out[RENDER_FOVEATION_LUT_SIZE][4])
+{
+	float points[RENDER_FOVEATION_MAX_POINTS][4];
+	int32_t count = foveation_points(axis, points);
+	int32_t segment = 1;
+	float previous = 0;
+	for (int k = 0; k <= RENDER_FOVEATION_LUT_SIZE; k++) {
+		float v = (float)k / RENDER_FOVEATION_LUT_SIZE;
+		while (segment < count - 1 && v > points[segment][0]) {
+			segment++;
+		}
+		const float *a = points[segment - 1], *b = points[segment];
+		float t = b[0] > a[0] ? (v - a[0]) / (b[0] - a[0]) : 0;
+		float image = a[1] + (b[1] - a[1]) * CLAMP(t, 0.0f, 1.0f);
+		if (k > 0) {
+			out[k - 1][0] = previous;
+			out[k - 1][1] = image;
+			out[k - 1][2] = out[k - 1][3] = 0;
+		}
+		previous = image;
+	}
+}
+
+/// The plain mesh UBO, or for a foveated view the mesh UBO with the view's foveation breakpoints.
+static VkResult
+mesh_or_foveated_alloc_and_write(struct render_gfx *render,
+                                 const struct gfx_mesh_view_data *view,
+                                 const struct render_gfx_mesh_ubo_data *mesh,
+                                 VkDescriptorSet *out_descriptor_set)
+{
+	if (view->foveation == NULL) {
+		return render_gfx_mesh_alloc_and_write(render, mesh, view->src_sampler, view->src_image_view,
+		                                       out_descriptor_set);
+	}
+	struct render_gfx_mesh_foveated_ubo_data data = {.mesh = *mesh};
+	foveation_lut(&view->foveation[0], data.lut_x);
+	foveation_lut(&view->foveation[1], data.lut_y);
+	return render_gfx_mesh_foveated_alloc_and_write(render, &data, view->src_sampler, view->src_image_view,
+	                                                out_descriptor_set);
+}
+
 static void
 projection_mesh_views(struct render_gfx *render,
                        const struct comp_layer *layer,
@@ -1057,6 +1139,7 @@ projection_mesh_views(struct render_gfx *render,
 		    .src_pose = v->pose,
 		    .src_fov = v->fov,
 		    .src_norm_rect = v->sub.norm_rect,
+		    .foveation = alpha ? NULL : view_foveation(v),
 		    .src_sampler = alpha ? render->r->samplers.clamp_to_border_transparent_black
 		                         : render->r->samplers.clamp_to_border_black,
 		    .src_image_view = get_image_view(get_layer_image(layer, i, v->sub.image_index),
@@ -1106,19 +1189,14 @@ crg_distortion_common(struct render_gfx *render,
 
 		struct render_gfx_mesh_ubo_data data = mesh_ubo_data(&md->views[i], d, i, do_timewarp);
 
-		ret = render_gfx_mesh_alloc_and_write( //
-		    render,                            //
-		    &data,                             //
-		    md->views[i].src_sampler,          //
-		    md->views[i].src_image_view,       //
-		    &ms.descriptor_sets[i]);           //
+		ret = mesh_or_foveated_alloc_and_write(render, &md->views[i], &data, &ms.descriptor_sets[i]);
 		VK_CHK_WITH_GOTO(ret, "render_gfx_mesh_alloc_and_write", err_no_memory);
 
 		VK_NAME_DESCRIPTOR_SET(vk, ms.descriptor_sets[i], "render_gfx mesh descriptor sets");
 		if (md->projection != NULL) {
 			struct render_gfx_mesh_ubo_data projection_data = mesh_ubo_data(&projection_views[i], d, i, do_timewarp);
-			ret = render_gfx_mesh_alloc_and_write(render, &projection_data, projection_views[i].src_sampler,
-			                                      projection_views[i].src_image_view, &projection_sets[i]);
+			ret = mesh_or_foveated_alloc_and_write(render, &projection_views[i], &projection_data,
+			                                       &projection_sets[i]);
 			VK_CHK_WITH_GOTO(ret, "render_gfx_mesh_alloc_and_write", err_no_memory);
 		}
 
@@ -1156,11 +1234,11 @@ crg_distortion_common(struct render_gfx *render,
 		    scissor_data);     //
 
 		if (!scratch_hidden(md->projection, d)) {
-			render_gfx_mesh_draw(      //
-			    render,                //
-			    i,                     // mesh_index
-			    ms.descriptor_sets[i], //
-			    do_timewarp);          //
+			if (md->views[i].foveation != NULL) {
+				render_gfx_mesh_foveated_draw(render, i, ms.descriptor_sets[i], do_timewarp);
+			} else {
+				render_gfx_mesh_draw(render, i, ms.descriptor_sets[i], do_timewarp);
+			}
 		}
 
 		if (md->projection != NULL) {
@@ -1168,6 +1246,8 @@ crg_distortion_common(struct render_gfx *render,
 			if (md->projection->data.flags & XRT_LAYER_COMPOSITION_BLEND_TEXTURE_SOURCE_ALPHA_BIT) {
 				render_gfx_mesh_projection_draw(render, i, projection_sets[i], do_timewarp,
 				                                !is_layer_unpremultiplied(&md->projection->data));
+			} else if (projection_views[i].foveation != NULL) {
+				render_gfx_mesh_foveated_draw(render, i, projection_sets[i], do_timewarp);
 			} else {
 				render_gfx_mesh_draw(render, i, projection_sets[i], do_timewarp);
 			}
@@ -1305,6 +1385,8 @@ crg_distortion_fast_path(struct render_gfx *render,
 		    &src_norm_rect,        // src_norm_rect
 		    clamp_to_border_black, // src_sampler
 		    src_image_view);       // src_image_view
+		// The mesh shader writes opaque pixels here, so a foveated view can always take the foveated shader
+		md.views[i].foveation = view_foveation(vds[i]);
 	}
 
 	crg_distortion_common( //
@@ -1605,6 +1687,15 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 				U_LOG_I("Drawing the projection layer directly in the distortion pass with overlays (timewarp %s)",
 				        d->do_timewarp ? "enabled" : "disabled");
 				logged = true;
+			}
+		}
+
+		for (uint32_t i = 0; i < squash_count; i++) {
+			static bool warned = false;
+			if (!warned && squashed[i].data.type == XRT_LAYER_PROJECTION &&
+			    view_foveation(&squashed[i].data.proj.v[0]) != NULL) {
+				U_LOG_W("A foveated projection layer is squashed, which doesn't expand it");
+				warned = true;
 			}
 		}
 

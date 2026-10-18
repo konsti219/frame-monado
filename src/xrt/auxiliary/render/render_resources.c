@@ -753,8 +753,11 @@ render_resources_init(struct render_resources *r,
 		// We currently use the aligmnent as max UBO size.
 		static_assert(sizeof(struct render_gfx_mesh_ubo_data) <= RENDER_ALWAYS_SAFE_UBO_ALIGNMENT, "MAX");
 
-		// Calculate size.
+		// Calculate size, plus foveated projection views (two routes per view).
 		VkDeviceSize size = buffer_count * RENDER_ALWAYS_SAFE_UBO_ALIGNMENT;
+		size += 2 * XRT_MAX_VIEWS *
+		        ((sizeof(struct render_gfx_mesh_foveated_ubo_data) + RENDER_ALWAYS_SAFE_UBO_ALIGNMENT - 1) /
+		         RENDER_ALWAYS_SAFE_UBO_ALIGNMENT * RENDER_ALWAYS_SAFE_UBO_ALIGNMENT);
 
 		ret = render_buffer_init(  //
 		    vk,                    // vk_bundle

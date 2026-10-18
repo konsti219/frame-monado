@@ -753,6 +753,8 @@ struct render_gfx_render_pass
 		//! Quad layers drawn directly in the distortion pass, [timewarp][premultiplied].
 		VkPipeline quad_pipelines[2][2];
 		VkPipeline projection_pipelines[2][2];
+		//! Opaque foveated projection layers (mesh_foveated.frag), per timewarp.
+		VkPipeline foveated_pipelines[2];
 	} mesh;
 
 	struct
@@ -956,6 +958,25 @@ struct render_gfx_mesh_quad_ubo_data
 	float cylinder_origin[4];
 	//! Central angle, height, 1 for a cylinder (0 for a quad), unused.
 	float cylinder_params[4];
+};
+
+#define RENDER_FOVEATION_MAX_POINTS (XRT_MAX_FOVEATION_SEGMENTS + 1)
+//! Intervals of the uniformly sampled view-to-image table per axis.
+#define RENDER_FOVEATION_LUT_SIZE 512
+
+/*!
+ * UBO data for an opaque foveated projection layer in the distortion pass (mesh_foveated.frag), starts with the mesh
+ * data.
+ *
+ * @relates render_gfx
+ */
+struct render_gfx_mesh_foveated_ubo_data
+{
+	struct render_gfx_mesh_ubo_data mesh;
+
+	//! Per interval i: image positions (0..1) at view positions i / size and (i + 1) / size, unused, unused.
+	float lut_x[RENDER_FOVEATION_LUT_SIZE][4];
+	float lut_y[RENDER_FOVEATION_LUT_SIZE][4];
 };
 
 /*!
@@ -1168,6 +1189,29 @@ render_gfx_mesh_quad_alloc_and_write(struct render_gfx *render,
                                      VkSampler src_sampler,
                                      VkImageView src_image_view,
                                      VkDescriptorSet *out_descriptor_set);
+
+/*!
+ * Allocate and write the UBO and descriptor set for an opaque foveated projection layer in the distortion pass.
+ *
+ * @public @memberof render_gfx
+ */
+XRT_CHECK_RESULT VkResult
+render_gfx_mesh_foveated_alloc_and_write(struct render_gfx *render,
+                                         const struct render_gfx_mesh_foveated_ubo_data *data,
+                                         VkSampler src_sampler,
+                                         VkImageView src_image_view,
+                                         VkDescriptorSet *out_descriptor_set);
+
+/*!
+ * Draw an opaque foveated projection layer over a view in the distortion pass.
+ *
+ * @public @memberof render_gfx
+ */
+void
+render_gfx_mesh_foveated_draw(struct render_gfx *render,
+                              uint32_t mesh_index,
+                              VkDescriptorSet descriptor_set,
+                              bool do_timewarp);
 
 /*!
  * Draw a quad layer over a view in the distortion pass, see @ref render_gfx_mesh_quad_alloc_and_write.

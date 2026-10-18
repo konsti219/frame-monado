@@ -117,6 +117,7 @@ EXTENSIONS = (
     ['XR_OPPO_controller_interaction', 'XRT_FEATURE_OPENXR_INTERACTION_OPPO'],
     ['XR_VARJO_quad_views', 'XRT_FEATURE_OPENXR_VARJO_QUAD_VIEWS'],
     ['XR_VALVE_frame_controller_interaction', 'XRT_FEATURE_OPENXR_INTERACTION_FRAME'],
+    ['XR_FRAME_foveated_projection', 'XRT_FEATURE_OPENXR_LAYER_FRAME_FOVEATION'],
     # Experimental extensions, sorted alphabetically.
     ['XR_EXTX_overlay', 'XRT_FEATURE_OPENXR_OVERLAY'],
     ['XR_HTCX_vive_tracker_interaction', 'ALWAYS_DISABLED'],

@@ -1412,6 +1412,20 @@ submit_projection_layer(struct oxr_session *sess,
 		data.proj.v[i].pose = pose[i];
 		fill_in_sub_image(scs[i], &proj->views[i].subImage, &data.proj.v[i].sub);
 		swapchains[i] = scs[i]->swapchain;
+#ifdef OXR_HAVE_FRAME_foveated_projection
+		const XrCompositionLayerProjectionFoveationFRAME *foveation =
+		    OXR_GET_INPUT_FROM_CHAIN(&proj->views[i], XR_TYPE_COMPOSITION_LAYER_PROJECTION_FOVEATION_FRAME,
+		                             XrCompositionLayerProjectionFoveationFRAME);
+		if (foveation != NULL && sess->sys->inst->extensions.FRAME_foveated_projection) {
+			const XrFoveationAxisFRAME *axes[2] = {&foveation->x, &foveation->y};
+			for (int a = 0; a < 2; a++) {
+				struct xrt_foveation_axis *out = &data.proj.v[i].foveation[a];
+				out->segment_count = MIN(axes[a]->segmentCount, XRT_MAX_FOVEATION_SEGMENTS);
+				out->center = (uint16_t)axes[a]->centerSegment;
+				memcpy(out->counts, axes[a]->pixelCounts, sizeof(out->counts));
+			}
+		}
+#endif
 	}
 	fill_in_color_scale_bias(sess, (XrCompositionLayerBaseHeader *)proj, &data);
 	fill_in_y_flip(sess, (XrCompositionLayerBaseHeader *)proj, &data);

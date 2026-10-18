@@ -257,12 +257,27 @@ struct xrt_sub_image
  * The @ref xrt_swapchain references and @ref xrt_device are provided outside of
  * this struct.
  */
+#define XRT_MAX_FOVEATION_SEGMENTS 24
+
+/*!
+ * A foveated projection view (XR_FRAME_foveated_projection): segment i of an axis covers counts[i] image pixels that
+ * each stand for |center - i| + 1 view pixels. A segment_count of 0 means the view isn't foveated.
+ */
+struct xrt_foveation_axis
+{
+	uint16_t center;
+	uint16_t segment_count;
+	uint16_t counts[XRT_MAX_FOVEATION_SEGMENTS];
+};
+
 struct xrt_layer_projection_view_data
 {
 	struct xrt_sub_image sub;
 
 	struct xrt_fov fov;
 	struct xrt_pose pose;
+
+	struct xrt_foveation_axis foveation[2];
 };
 
 /*!
