@@ -43,7 +43,9 @@ on the headset, read when the compositor starts (restart `monado.service` after 
 {
   "frame": {
     "passthrough_scratch_scale": 0.5,
-    "passthrough_behind_opaque": false
+    "passthrough_behind_opaque": false,
+    "gpu_max_mhz": 422,
+    "stop_sched_ext": true
   }
 }
 ```
@@ -53,7 +55,13 @@ on the headset, read when the compositor starts (restart `monado.service` after 
 - `passthrough_behind_opaque` (default false): keep the cameras and passthrough running while an opaque
   projection layer (a PC VR stream without alpha) hides them. Off saves ~0.8 W while streaming.
 
-`monado.service` caps the GPU clock at 578 MHz for the session and restores the top clock afterwards.
+- `gpu_max_mhz` (default 422): GPU clock cap for the session, applied by `monado.service` (restored afterwards).
+  Under the spin test, 422 against 578 MHz saves ~0.3 W with no late frames and ~0.7 ms longer compositor budget;
+  366 saves nothing more.
+- `stop_sched_ext` (default true): stop SteamOS's `scx_lavd` scheduler for the session (started again afterwards).
+  lavd keeps the CPU clusters near their top clocks at 20–30% load; the kernel's default scheduler with schedutil
+  saves ~0.25 W of CPU (0.1–0.3 W total) in the spin test with no more late frames. Realtime threads (compositor,
+  Valve's tracking) aren't scheduled by sched_ext either way.
 
 The eye gaze is corrected with `~/.config/frame-shell/eye-calibration`, which the frame shell keeps fitting from
 pointer clicks (the user looks at what they click): `corrected = (measured - offset) / gain` per axis in degrees,
