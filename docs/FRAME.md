@@ -1,7 +1,7 @@
 # Steam Frame runtime
 
 This is the standalone Monado fork for the Steam Frame. `main` contains the headset drivers, tracking,
-passthrough, compositor, positional timewarp and floor estimation.
+passthrough, compositor and floor estimation.
 
 ```sh
 git clone git+ssh://github.com_konsti219/konsti219/frame-monado.git

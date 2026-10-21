@@ -142,13 +142,6 @@ void
 render_calc_time_warp_projection(const struct xrt_fov *fov, struct xrt_matrix_4x4 *result);
 
 /*!
- * Where the eyes fixate, as 1 / distance in metres, for positional timewarp (see render_calc_time_warp_matrix).
- * Called by the eye-tracking driver; values older than half a second are ignored.
- */
-void
-render_set_fixation_depth(float inverse_metres);
-
-/*!
  * Calculates a timewarp matrix which takes in NDC coords and gives out results
  * in [-1, 1] space that needs a perspective divide.
  */
