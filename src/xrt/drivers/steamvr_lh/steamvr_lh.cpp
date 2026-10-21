@@ -490,6 +490,10 @@ Context::wait_for_discover()
 	    std::chrono::steady_clock::now() + std::chrono::milliseconds(debug_get_num_option_lh_discover_wait_ms());
 
 	while (true) {
+		// Frame controller proxies accept late connections; only the HMD must finish setup before startup.
+		if (this->allow_late_controllers && this->hmd != nullptr && this->devices_in_setup == 0)
+			break;
+
 		if (std::chrono::steady_clock::now() < this->discover_end_time) {
 			this->discover_cv.wait_until(lk, this->discover_end_time);
 			continue;

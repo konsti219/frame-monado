@@ -8,7 +8,7 @@ Environment=STEAMVR_LH_ENABLE=1 STEAMVR_PATH=/opt/steamvr STEAMVR_LH_DRIVER=cv L
 Environment=XRT_COMPOSITOR_FORCE_VK_DISPLAY=0 XRT_NO_STDIN=1
 # Gamescope's WSI layer has nothing to hook here and logs every frame, which gets the journal rate-limited
 Environment=DISABLE_GAMESCOPE_WSI=1
-# Initial device discovery; cv controllers can also connect after startup
+# HMD discovery timeout; cv starts immediately once it is ready, and controllers can connect later
 Environment=LH_DISCOVER_WAIT_MS=15000
 # Full rate on turnip's VK_KHR_display needs 3 images and the graphics (not compute) compositor path;
 # mode 6 is 72 Hz like SteamVR (0: 120, 1: 144, 2: 108, 3: 96, 4: 90, 5: 80), and 100% avoids Monado's default

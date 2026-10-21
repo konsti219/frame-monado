@@ -19,6 +19,11 @@ checks dependencies, preserves whether the shell/runtime were running, and resta
 layout using the headset's installed SteamVR driver and the deployed Monado shim. SteamOS session/SDDM
 setup remains machine configuration, not a build requirement.
 
+With `driver_cv`, discovery finishes as soon as the HMD has completed activation; the stable controller slots
+accept controllers later. `LH_DISCOVER_WAIT_MS` is the timeout when the HMD is missing, rather than a mandatory
+startup delay. Suspend stops the shell/runtime and restarts them on wake; switching from SteamVR still waits
+for `vrserver` to release the controller radio before starting Monado.
+
 The `wivrn` branch is the PC runtime dependency: upstream Monado `09741cbcb` with WiVRn's integrations
 and app frame metrics applied as committed source. It deliberately uses WiVRn's runtime revision rather
 than the headset branch. Frame shell pins its commit in `flake.lock`; it does not apply runtime patches.

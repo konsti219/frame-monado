@@ -76,7 +76,7 @@ struct pt_mesh
 	struct pt_queue data, layout;
 	uint32_t width, height; // vertex grid, from the layout's triangle indices
 	struct pt_texture depth;
-	uint64_t seq;
+	uint64_t seq, layout_id;
 	double time; // posePredictionBaseTime, CLOCK_MONOTONIC_RAW seconds
 	float focal, cx, cy;
 	float mesh_from_world[12]; // 3x4 rows
@@ -837,14 +837,41 @@ half_from_float(float value)
 
 static void *floor_worker(void *data);
 
+static void
+mesh_clear_layout(struct pt_mesh *m)
+{
+	if (m->floor_started) {
+		pthread_mutex_lock(&m->floor_mutex);
+		m->floor_running = false;
+		pthread_cond_signal(&m->floor_condition);
+		pthread_mutex_unlock(&m->floor_mutex);
+		pthread_join(m->floor_thread, NULL);
+		pthread_cond_destroy(&m->floor_condition);
+		pthread_mutex_destroy(&m->floor_mutex);
+	}
+	free(m->floor_vertices);
+	free(m->floor_pending_vertices);
+	free(m->vertices);
+	free(m->floor_points);
+	m->vertices = m->floor_points = m->floor_vertices = m->floor_pending_vertices = NULL;
+	m->floor_started = m->floor_running = m->floor_pending = false;
+	m->valid = m->logged = false;
+	m->seq = m->floor_seq = 0;
+	m->floor_sample_time = 0;
+}
+
+
 // Grid size from the layout's first triangle (0, width, 1) and highest index
 static bool
-mesh_layout(struct pt_mesh *m)
+mesh_layout(struct pt_mesh *m, uint64_t expected_id)
 {
 	uint32_t header_size, data_size, index;
 	uint64_t seq;
 	const uint8_t *block = queue_newest(&m->layout, &header_size, &data_size, &seq, &index);
 	if (!block)
+		return false;
+	const uint64_t *layout_id = queue_property(block, header_size, "/meshLayout/layoutId", 8);
+	if (!layout_id || *layout_id != expected_id)
 		return false;
 	const uint32_t *indices = (const uint32_t *)(block + header_size);
 	const uint32_t *count_prop = queue_property(block, header_size, "/meshLayout/indexCount", 4);
@@ -859,8 +886,10 @@ mesh_layout(struct pt_mesh *m)
 	if (width < 2 || width > 1024 || (highest + 1) % width || (highest + 1) / width < 2)
 		return false;
 	uint32_t height = (highest + 1) / width;
-	if (height > 1024)
+	if (height > 1024 || queue_block_seq(&m->layout, index) != seq)
 		return false;
+	mesh_clear_layout(m);
+	m->layout_id = expected_id;
 	float *vertices = calloc((size_t)width * height, 3 * sizeof(float));
 	float *points = calloc((size_t)width * height, 4 * sizeof(float));
 	if (!vertices || !points) {
@@ -1055,12 +1084,20 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 	if (!pt->mesh_enabled || !queue_open(&m->data, SF_MESH_DATA_PATH) ||
 	    !queue_open(&m->layout, SF_MESH_LAYOUT_PATH))
 		return;
-	if (!m->vertices && !mesh_layout(m))
-		return;
 	uint32_t header_size, data_size, index;
 	uint64_t seq;
 	const uint8_t *block = queue_newest(&m->data, &header_size, &data_size, &seq, &index);
-	if (!block || seq == m->seq || (!upload && seq == m->floor_seq) ||
+	if (!block)
+		return;
+	const uint64_t *layout_id = queue_property(block, header_size, "/meshData/layoutId", 8);
+	if (!layout_id)
+		return;
+	if (!m->vertices || *layout_id != m->layout_id) {
+		m->valid = false;
+		if (!mesh_layout(m, *layout_id))
+			return;
+	}
+	if (seq == m->seq || (!upload && seq == m->floor_seq) ||
 	    (uint64_t)m->width * m->height * 12 > data_size)
 		return;
 	const double *time = queue_property(block, header_size, "/meshData/posePredictionBaseTime", 8);
@@ -1521,19 +1558,7 @@ sf_comp_passthrough_destroy(struct sf_comp_passthrough **ptr)
 	if (pt->shm)
 		munmap(pt->shm, sizeof(*pt->shm));
 	texture_destroy(pt, &pt->mesh.depth);
-	if (pt->mesh.floor_started) {
-		pthread_mutex_lock(&pt->mesh.floor_mutex);
-		pt->mesh.floor_running = false;
-		pthread_cond_signal(&pt->mesh.floor_condition);
-		pthread_mutex_unlock(&pt->mesh.floor_mutex);
-		pthread_join(pt->mesh.floor_thread, NULL);
-		pthread_cond_destroy(&pt->mesh.floor_condition);
-		pthread_mutex_destroy(&pt->mesh.floor_mutex);
-	}
-	free(pt->mesh.floor_vertices);
-	free(pt->mesh.floor_pending_vertices);
-	free(pt->mesh.vertices);
-	free(pt->mesh.floor_points);
+	mesh_clear_layout(&pt->mesh);
 	queue_close(&pt->mesh.data);
 	queue_close(&pt->mesh.layout);
 	if (pt->pose_trace)
