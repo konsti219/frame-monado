@@ -26,7 +26,7 @@ extern "C" {
 //! Major version of the API.
 #define MND_API_VERSION_MAJOR 1
 //! Minor version of the API.
-#define MND_API_VERSION_MINOR 8
+#define MND_API_VERSION_MINOR 9
 //! Patch version of the API.
 #define MND_API_VERSION_PATCH 0
 
@@ -316,6 +316,34 @@ mnd_root_get_client_id_at_index(mnd_root_t *root, uint32_t index, uint32_t *out_
  */
 mnd_result_t
 mnd_root_get_client_name(mnd_root_t *root, uint32_t client_id, const char **out_name);
+
+/*!
+ * Get the process ID of the client.
+ *
+ * @param root        The libmonado state.
+ * @param client_id   ID of client to retrieve the process ID from.
+ * @param[out] out_pid Pointer to populate with the process ID.
+ *
+ * @pre Called @ref mnd_root_update_client_list at least once
+ *
+ * @return MND_SUCCESS on success
+ */
+mnd_result_t
+mnd_root_get_client_pid(mnd_root_t *root, uint32_t client_id, int32_t *out_pid);
+
+/*!
+ * Get the Steam game of the client: the SteamAppId in its environment, 0 if none.
+ *
+ * @param root        The libmonado state.
+ * @param client_id   ID of client to retrieve the app ID from.
+ * @param[out] out_app_id Pointer to populate with the app ID.
+ *
+ * @pre Called @ref mnd_root_update_client_list at least once
+ *
+ * @return MND_SUCCESS on success
+ */
+mnd_result_t
+mnd_root_get_client_steam_app_id(mnd_root_t *root, uint32_t client_id, uint64_t *out_app_id);
 
 /*!
  * Get the state flags of the client at the given index.

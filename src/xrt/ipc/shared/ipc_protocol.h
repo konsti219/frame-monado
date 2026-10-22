@@ -357,6 +357,8 @@ struct ipc_body_tracker_create_info
 struct ipc_client_description
 {
 	pid_t pid;
+	//! The Steam game the client belongs to (SteamAppId), 0 if none.
+	uint64_t steam_app_id;
 	struct xrt_application_info info;
 };
 
@@ -397,6 +399,7 @@ struct ipc_app_state
 	struct ipc_client_io_blocks io_blocks;
 	uint32_t z_order;
 	pid_t pid;
+	uint64_t steam_app_id;
 	struct xrt_application_info info;
 };
 
