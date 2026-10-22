@@ -72,7 +72,7 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   Saves ~0.25 W of CPU, but the frame shell's client then delivers ~6% of its frames too late for Monado (reused,
   a visible jump with motion) against ~0.4% under lavd.
 - `mirror` (default true): the headset view in SteamVR's v4l2loopback device (`/dev/video99`, 1920x1080 RGB3), as
-  SteamVR's v4l2cam provides it (FrameMate's mirroring): the left eye without lens distortion, cropped to 16:9 around
+  SteamVR's v4l2cam provides it (FrameMate's mirroring): the left eye without lens distortion, turned upright and cropped to 16:9 around
   its forward direction, drawn again from the frame's scratch images only while a program streams from the device.
   `mirror_fps` (default 60) caps its rate; at 90 Hz that's every second frame.
 

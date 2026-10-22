@@ -595,12 +595,13 @@ void
 render_resources_fini(struct render_resources *r);
 
 /*!
- * Sets the flat mesh render_gfx::mirror_mesh draws with: the whole target shows the @p uv part of a view.
+ * Sets the flat mesh render_gfx::mirror_mesh draws with: the target's corners (top left, top right, bottom left,
+ * bottom right) show the view at @p uv, so it can be any parallelogram of the view.
  *
  * @public @memberof render_resources
  */
 bool
-render_resources_set_mirror_mesh(struct render_resources *r, const struct xrt_normalized_rect *uv);
+render_resources_set_mirror_mesh(struct render_resources *r, const struct xrt_vec2 uv[4]);
 
 /*!
  * Creates or recreates the compute distortion textures if necessary.
