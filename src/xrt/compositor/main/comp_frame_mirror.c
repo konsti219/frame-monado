@@ -56,7 +56,7 @@ struct sf_comp_mirror
 	bool target_ready;
 
 	// Part of view 0 the mirror mesh shows
-	struct xrt_normalized_rect uv;
+	struct xrt_vec2 corners[4];
 	uint64_t interval_ns;
 	uint64_t last_ns;
 
@@ -69,23 +69,34 @@ struct sf_comp_mirror
 	atomic_bool stop;
 };
 
-/// 16:9 part of a view in tangent space, centred on the eye's forward direction and kept inside the view
-static struct xrt_normalized_rect
-mirror_crop(const struct xrt_fov *fov)
+/// Corners of the mirror in view 0's uv: an upright 16:9 rectangle around the eye's forward direction in tangent
+/// space, turned by the eye's roll against the head (the Frame's panels sit upside down and canted), as large as
+/// fits inside the view
+static void
+mirror_corners(const struct xrt_fov *fov, const struct xrt_quat *eye, struct xrt_vec2 out[4])
 {
 	float l = tanf(fov->angle_left), r = tanf(fov->angle_right);
 	float u = tanf(fov->angle_up), dn = tanf(fov->angle_down);
-	float w = r - l, h = u - dn;
-	const float aspect = (float)MIRROR_WIDTH / (float)MIRROR_HEIGHT;
-	float fw = 1.0f, fh = 1.0f;
-	if (w / h > aspect) {
-		fw = h * aspect / w;
-	} else {
-		fh = w / aspect / h;
+
+	struct xrt_vec3 x_axis = {1, 0, 0};
+	math_quat_rotate_vec3(eye, &x_axis, &x_axis);
+	float roll = atan2f(x_axis.y, x_axis.x);
+	float c = cosf(roll), s = sinf(roll);
+
+	// Half extents of the largest centred 16:9 rectangle whose turned corners stay inside the view
+	const float k = (float)MIRROR_WIDTH / (float)MIRROR_HEIGHT;
+	float a = fminf(-l, r), b = fminf(u, -dn);
+	float half_h = fminf(a / (k * fabsf(c) + fabsf(s)), b / (k * fabsf(s) + fabsf(c)));
+	float half_w = k * half_h;
+
+	for (int i = 0; i < 4; i++) {
+		float px = (float)(i % 2 ? 1 : -1) * half_w;
+		float py = (float)(i / 2 ? -1 : 1) * half_h;
+		// Head-upright direction into the eye's tangent space (the inverse roll)
+		float ex = c * px + s * py;
+		float ey = -s * px + c * py;
+		out[i] = (struct xrt_vec2){(ex - l) / (r - l), (u - ey) / (u - dn)};
 	}
-	float x = CLAMP(-l / w - fw * 0.5f, 0.0f, 1.0f - fw);
-	float y = CLAMP(u / h - fh * 0.5f, 0.0f, 1.0f - fh);
-	return (struct xrt_normalized_rect){.x = x, .y = y, .w = fw, .h = fh};
 }
 
 static void
@@ -288,12 +299,13 @@ sf_comp_mirror_draw(struct sf_comp_mirror *m,
 	struct comp_compositor *c = m->c;
 	struct vk_bundle *vk = &c->base.vk;
 
-	struct xrt_normalized_rect uv = mirror_crop(&d->views[0].fov);
-	if (memcmp(&uv, &m->uv, sizeof(uv)) != 0) {
-		if (!render_resources_set_mirror_mesh(&c->nr, &uv)) {
+	struct xrt_vec2 corners[4];
+	mirror_corners(&d->views[0].fov, &d->views[0].eye_pose.orientation, corners);
+	if (memcmp(corners, m->corners, sizeof(corners)) != 0) {
+		if (!render_resources_set_mirror_mesh(&c->nr, corners)) {
 			return;
 		}
-		m->uv = uv;
+		memcpy(m->corners, corners, sizeof(corners));
 	}
 
 	// View 0 only, onto the whole mirror image, upright

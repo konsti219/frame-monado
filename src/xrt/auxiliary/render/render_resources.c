@@ -1334,7 +1334,7 @@ render_scratch_images_fini(struct render_resources *r, struct render_scratch_ima
 }
 
 bool
-render_resources_set_mirror_mesh(struct render_resources *r, const struct xrt_normalized_rect *uv)
+render_resources_set_mirror_mesh(struct render_resources *r, const struct xrt_vec2 uv[4])
 {
 	struct vk_bundle *vk = r->vk;
 	const uint32_t floats = r->mesh.stride / sizeof(float);
@@ -1344,7 +1344,7 @@ render_resources_set_mirror_mesh(struct render_resources *r, const struct xrt_no
 	float corners[4][8];
 	for (uint32_t i = 0; i < 4; i++) {
 		float u = (float)(i % 2), v = (float)(i / 2);
-		float su = uv->x + u * uv->w, sv = uv->y + v * uv->h;
+		float su = uv[i].x, sv = uv[i].y;
 		float vertex[8] = {u * 2.0f - 1.0f, v * 2.0f - 1.0f, su, sv, su, sv, su, sv};
 		memcpy(corners[i], vertex, sizeof(vertex));
 	}
