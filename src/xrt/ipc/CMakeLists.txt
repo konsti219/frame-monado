@@ -133,8 +133,23 @@ endif()
 ###
 # Server
 
+set(CAPTURE_BINDINGS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../auxiliary/bindings")
+file(GLOB CAPTURE_REBINDINGS CONFIGURE_DEPENDS "${CAPTURE_BINDINGS_DIR}/rebindings/*.json")
+set(CAPTURE_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/server/ipc_input_capture_bindings.py")
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ipc_input_capture_bindings.h"
+    COMMAND ${PYTHON_EXECUTABLE} "${CAPTURE_GENERATOR}" "${CAPTURE_BINDINGS_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/ipc_input_capture_bindings.h"
+    DEPENDS "${CAPTURE_GENERATOR}" "${CAPTURE_BINDINGS_DIR}/bindings.py"
+            "${CAPTURE_BINDINGS_DIR}/bindings.json" "${CAPTURE_BINDINGS_DIR}/rebinding.py" ${CAPTURE_REBINDINGS}
+    VERBATIM
+)
+
 add_library(
 	ipc_server STATIC
+    "${CMAKE_CURRENT_BINARY_DIR}/ipc_input_capture_bindings.h"
+    server/ipc_server_input_capture.c
+    server/ipc_server_input_capture.h
 	${CMAKE_CURRENT_BINARY_DIR}/ipc_server_generated.c
 	${CMAKE_CURRENT_BINARY_DIR}/ipc_server_generated.h
 	server/ipc_server.h

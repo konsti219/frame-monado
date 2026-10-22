@@ -1038,6 +1038,9 @@ struct render_gfx_layer_projection_data
 	struct xrt_matrix_4x4 mvp;
 	struct xrt_colour_rgba_f32 color_scale;
 	struct xrt_colour_rgba_f32 color_bias;
+	uint32_t foveation_enabled[4];
+	float lut_x[RENDER_FOVEATION_LUT_SIZE][4];
+	float lut_y[RENDER_FOVEATION_LUT_SIZE][4];
 };
 
 
