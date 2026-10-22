@@ -35,6 +35,7 @@
 
 
 #include <stdio.h>
+#include <stdlib.h>
 #if !defined(XRT_OS_WINDOWS)
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -338,6 +339,9 @@ ipc_client_describe_client(struct ipc_connection *ipc_c, const struct xrt_applic
 	struct ipc_client_description desc = {0};
 	desc.info = *a_info;
 	desc.pid = pid; // Extra info.
+	// Steam starts games with it in their environment
+	const char *steam_app_id = getenv("SteamAppId");
+	desc.steam_app_id = steam_app_id != NULL ? strtoull(steam_app_id, NULL, 10) : 0;
 
 	xrt_result_t xret = ipc_call_instance_describe_client(ipc_c, &desc);
 	if (xret != XRT_SUCCESS) {

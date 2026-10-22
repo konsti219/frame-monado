@@ -342,6 +342,7 @@ ipc_handle_instance_describe_client(volatile struct ipc_client_state *ics,
 {
 	ics->client_state.info = client_desc->info;
 	ics->client_state.pid = client_desc->pid;
+	ics->client_state.steam_app_id = client_desc->steam_app_id;
 
 	struct u_pp_sink_stack_only sink;
 	u_pp_delegate_t dg = u_pp_sink_stack_only_init(&sink);
