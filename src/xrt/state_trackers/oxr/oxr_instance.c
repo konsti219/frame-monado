@@ -58,7 +58,7 @@ DEBUG_GET_ONCE_TRISTATE_OPTION(disable_quad_views, "OXR_DISABLE_QUAD_VIEWS")
 DEBUG_GET_ONCE_BOOL_OPTION(map_stage_to_local_floor, "OXR_RECENTER_STAGE", false)
 
 
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 static bool
 on_activity_lifecycle_state_changed(struct xrt_instance_android *xinst_android,
                                     enum xrt_android_lifecycle_event event,
@@ -387,7 +387,7 @@ oxr_instance_create(struct oxr_logger *log,
 		return ret;
 	}
 
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 	xret = xrt_instance_android_register_activity_lifecycle_callback(
 	    inst->xinst->android_instance, on_activity_lifecycle_state_changed,
 	    XRT_ANDROID_LIVECYCLE_EVENT_ON_RESUME | XRT_ANDROID_LIVECYCLE_EVENT_ON_PAUSE, inst);

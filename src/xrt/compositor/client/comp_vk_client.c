@@ -9,6 +9,7 @@
  * @ingroup comp_client
  */
 
+#include "xrt/xrt_config_os.h"
 #include "vk/vk_compositor_flags.h"
 
 #include "util/u_misc.h"
@@ -895,7 +896,8 @@ client_vk_compositor_create(struct xrt_compositor_native *xcn,
 
 	VK_NAME_COMMAND_POOL(&c->vk, c->pool.pool, "client_vk_compositor command pool");
 
-#ifdef VK_KHR_timeline_semaphore
+#if defined(VK_KHR_timeline_semaphore) && !defined(XRT_FEATURE_ANDROID_HOSTED)
+	// Hosted Android clients' driver is another one than the service's: sync files (plain kernel fences) instead
 	if (vk_can_import_and_export_timeline_semaphore(&c->vk)) {
 		xret = setup_semaphore(c);
 		if (xret != XRT_SUCCESS) {

@@ -15,6 +15,30 @@ Builds run on the PC in the Podman cross-compilation SDK. Sources are tracked no
 checks dependencies, preserves whether the shell/runtime were running, and restarts those services.
 `FRAME_HEADSET` overrides the default `steamos@frame` SSH target.
 
+The build also produces a matching x86-64 IPC client for Windows games running through FEX and x86-64 Proton.
+Only that client runs under emulation; the headset service and compositor stay ARM64. The shared
+`share/openxr/1/openxr_frame.json` uses the dynamic linker's `$LIB` token to select `lib/libopenxr_monado.so`
+on SteamOS ARM64 or `lib/x86_64-linux-gnu/libopenxr_monado.so` in the x86 Steam Runtime. The client build uses
+the headset build's version tag so Monado's IPC version check remains enabled. This client supports Vulkan,
+which Proton's OpenXR bridge uses for translated Direct3D applications.
+Touch and simple-controller suggestions are rebound to the Frame profile, including grip/aim poses and
+haptics, so OpenXR games do not need explicit Frame support. Touch is preferred over the minimal simple
+profile when both are available; its left X/Y buttons map to D-pad down/right, matching WiVRn.
+
+Frame shell selects this manifest and shares `$XDG_RUNTIME_DIR/monado_comp_ipc` with Steam's containers through
+`PRESSURE_VESSEL_FILESYSTEMS_RW`. It disables automatic OpenXR runtime importing: FEX's separate graphics
+provider root cannot resolve libraries in the host home directory. The libraries themselves are already visible
+through Steam's normal home-directory mount. These settings belong to the shell session and leave SteamVR's
+system runtime selection alone.
+
+Android games (Lepton, Steam's Android compatibility tool) get an Android build of the client
+(`lib/android-arm64/libopenxr_monado.so`, `XRT_FEATURE_ANDROID_HOSTED`, NDK fetched by `build-headset`). It talks to
+the Linux service like any other client: socket in `/data/steamvr/runtime` (Lepton's mount of `steamvr path`, which
+the frame shell points at a folder with this client and a hard link to the socket), images as dma-buf fds, frames
+signalled with sync files, the Linux layer limit (the IPC shared memory layout) and debug options from the
+environment (`LEPTON_ENV_XRT_LOG=debug` and so on). Projection layers of alpha blended frames use their alpha
+whether or not they set source alpha, as SteamVR does: Unreal games set none.
+
 `headset/` contains SteamOS session integration and diagnostic scripts. `setup-rt.sh` creates the runtime
 layout using the headset's installed SteamVR driver and the deployed Monado shim. SteamOS session/SDDM
 setup remains machine configuration, not a build requirement.

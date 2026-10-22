@@ -7,3 +7,16 @@ flock 9
 podman build -t localhost/frame-monado-cross -f "$root/tools/Containerfile" "$root/tools"
 podman run --rm --userns=keep-id -v "$root:/work:Z" -w /work \
     localhost/frame-monado-cross bash /work/tools/compile-headset.sh
+podman run --rm --userns=keep-id -v "$root:/work:Z" -w /work \
+    localhost/frame-monado-cross bash /work/tools/compile-x86-client.sh
+# Android NDK for the Lepton client (Android games)
+ndk="$root/out/android-sdk/android-ndk-r28c"
+if [[ ! -d "$ndk" ]]; then
+    mkdir -p "$root/out/android-sdk"
+    curl -fL https://dl.google.com/android/repository/android-ndk-r28c-linux.zip -o "$root/out/android-sdk/ndk.zip"
+    echo "a7b54a5de87fecd125a17d54f73c446199e72a64  $root/out/android-sdk/ndk.zip" | sha1sum -c -
+    unzip -q "$root/out/android-sdk/ndk.zip" -d "$root/out/android-sdk"
+    rm "$root/out/android-sdk/ndk.zip"
+fi
+podman run --rm --userns=keep-id -v "$root:/work:Z" -w /work \
+    localhost/frame-monado-cross bash /work/tools/compile-android-client.sh

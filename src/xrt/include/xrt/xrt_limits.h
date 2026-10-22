@@ -80,7 +80,8 @@
 /*!
  * Max number of layers which can be handled at once.
  */
-#ifdef XRT_OS_ANDROID
+// Hosted Android clients share the Linux service's IPC memory layout
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 #define XRT_MAX_LAYERS 32
 #elif defined(XRT_OS_LINUX) || defined(XRT_OS_WINDOWS) || defined(XRT_OS_OSX)
 #define XRT_MAX_LAYERS 128

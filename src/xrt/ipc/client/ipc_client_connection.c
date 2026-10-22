@@ -51,13 +51,13 @@
 #include "android/android_ahardwarebuffer_allocator.h"
 #endif
 
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 #include "android/ipc_client_android.h"
 #endif // XRT_OS_ANDROID
 
 DEBUG_GET_ONCE_BOOL_OPTION(ipc_ignore_version, "IPC_IGNORE_VERSION", false)
 
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 
 static bool
 ipc_client_socket_connect(struct ipc_connection *ipc_c, struct _JavaVM *vm, void *context)
@@ -234,7 +234,12 @@ ipc_client_socket_connect(struct ipc_connection *ipc_c)
 
 	char sock_file[PATH_MAX];
 
+#ifdef XRT_FEATURE_ANDROID_HOSTED
+	// Lepton mounts the runtime's folder there (as SteamVR's), with a hard link to the service's socket
+	ssize_t size = snprintf(sock_file, PATH_MAX, "%s/%s", XRT_ANDROID_HOSTED_DIR, XRT_IPC_MSG_SOCK_FILENAME);
+#else
 	ssize_t size = u_file_get_path_in_runtime_dir(XRT_IPC_MSG_SOCK_FILENAME, sock_file, PATH_MAX);
+#endif
 	if (size == -1) {
 		IPC_ERROR(ipc_c, "Could not get socket file name");
 		return false;
@@ -375,7 +380,7 @@ ipc_client_connection_init(struct ipc_connection *ipc_c,
 	}
 
 	// Connect the service.
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 	struct _JavaVM *vm = i_info->platform_info.vm;
 	void *context = i_info->platform_info.context;
 
@@ -433,7 +438,7 @@ ipc_client_connection_fini(struct ipc_connection *ipc_c)
 	ipc_message_channel_close(&ipc_c->imc);
 	os_mutex_destroy(&ipc_c->mutex);
 
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 	ipc_client_android_destroy(&(ipc_c->ica));
 #endif
 }
