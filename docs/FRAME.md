@@ -50,7 +50,9 @@ on the headset, read when the compositor starts (restart `monado.service` after 
     "passthrough_scratch_scale": 0.5,
     "passthrough_behind_opaque": false,
     "gpu_max_mhz": 578,
-    "stop_sched_ext": false
+    "stop_sched_ext": false,
+    "mirror": true,
+    "mirror_fps": 60
   }
 }
 ```
@@ -69,6 +71,10 @@ on the headset, read when the compositor starts (restart `monado.service` after 
 - `stop_sched_ext` (default false): stop SteamOS's `scx_lavd` scheduler for the session (started again afterwards).
   Saves ~0.25 W of CPU, but the frame shell's client then delivers ~6% of its frames too late for Monado (reused,
   a visible jump with motion) against ~0.4% under lavd.
+- `mirror` (default true): the headset view in SteamVR's v4l2loopback device (`/dev/video99`, 1920x1080 RGB3), as
+  SteamVR's v4l2cam provides it (FrameMate's mirroring): the left eye without lens distortion, cropped to 16:9 around
+  its forward direction, drawn again from the frame's scratch images only while a program streams from the device.
+  `mirror_fps` (default 60) caps its rate; at 90 Hz that's every second frame.
 
 The eye gaze is corrected with `~/.config/frame-shell/eye-calibration`, which the frame shell keeps fitting from
 pointer clicks (the user looks at what they click): `corrected = (measured - offset) / gain` per axis in degrees,

@@ -190,6 +190,10 @@ struct comp_render_dispatch_data
 	//! Very often true, can be disabled for debugging.
 	bool do_timewarp;
 
+	//! Draws view 0 again into a mirror target (render_gfx::mirror_mesh), from the scratch images already drawn
+	//! this frame: no squash, layers drawn in the distortion pass cover the whole target.
+	bool mirror;
+
 	struct
 	{
 		//! Has this struct been setup to use the target.

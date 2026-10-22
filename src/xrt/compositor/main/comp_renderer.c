@@ -38,6 +38,7 @@
 
 #include "main/comp_frame.h"
 #include "main/comp_mirror_to_debug_gui.h"
+#include "main/comp_frame_mirror.h"
 
 #ifdef XRT_FEATURE_WINDOW_PEEK
 #include "main/comp_window_peek.h"
@@ -130,6 +131,9 @@ struct comp_renderer
 	struct comp_settings *settings;
 
 	struct comp_mirror_to_debug_gui mirror_to_debug_gui;
+
+	//! Headset view for other programs (SteamVR's v4l2loopback device), NULL when off.
+	struct sf_comp_mirror *mirror;
 
 	//! @}
 
@@ -748,6 +752,10 @@ renderer_init(struct comp_renderer *r, struct comp_compositor *c, VkExtent2D scr
 		COMP_ERROR(c, "comp_mirror_init: %s", vk_result_string(ret));
 		assert(false && "Whelp, can't return a error. But should never really fail.");
 	}
+
+	if (!r->settings->use_compute) {
+		r->mirror = sf_comp_mirror_create(c);
+	}
 }
 
 static void
@@ -1009,6 +1017,7 @@ renderer_fini(struct comp_renderer *r)
 	renderer_close_renderings_and_fences(r);
 
 	// Do before layer render just in case it holds any references.
+	sf_comp_mirror_destroy(&r->mirror);
 	comp_mirror_fini(&r->mirror_to_debug_gui, vk);
 
 	// Do this after the layer renderer.
@@ -1344,12 +1353,6 @@ comp_renderer_draw(struct comp_renderer *r)
 	renderer_wait_queue_idle(r);
 	sf_comp_passthrough_finish(r->passthrough);
 
-	/*
-	 * Free any resources and finalize the scratch images,
-	 * which sends them send to debug UI if it is active.
-	 */
-	chl_frame_state_fini(&frame_state);
-
 	// Check timestamps.
 	if (xret == XRT_SUCCESS) {
 		/*
@@ -1373,6 +1376,18 @@ comp_renderer_draw(struct comp_renderer *r)
 	} else {
 		render_gfx_fini(&render_g);
 	}
+
+	// After the frame's GPU work and timestamps: draws view 0 again from the scratch images still held
+	if (xret == XRT_SUCCESS && !use_compute && sf_comp_mirror_due(r->mirror, predicted_display_time_ns)) {
+		sf_comp_mirror_draw(r->mirror, c->base.layer_accum.layers, c->base.layer_accum.layer_count,
+		                    &frame_state.data, frame_id, predicted_display_time_ns);
+	}
+
+	/*
+	 * Free any resources and finalize the scratch images,
+	 * which sends them send to debug UI if it is active.
+	 */
+	chl_frame_state_fini(&frame_state);
 
 	if (present_success) {
 		renderer_wait_for_present(r, desired_present_time_ns);

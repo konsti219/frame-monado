@@ -25,7 +25,11 @@
 #include "cache/render_shader_specialization_helpers.h"
 
 
+#include "util/u_misc.h"
+
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 
 /*
@@ -1151,6 +1155,8 @@ render_resources_fini(struct render_resources *r)
 	D(QueryPool, r->query_pool);
 	render_buffer_fini(vk, &r->mesh.vbo);
 	render_buffer_fini(vk, &r->mesh.ibo);
+	render_buffer_fini(vk, &r->mesh.mirror_vbo);
+	render_buffer_fini(vk, &r->mesh.mirror_ibo);
 	for (uint32_t i = 0; i < r->view_count; ++i) {
 		render_buffer_fini(vk, &r->mesh.ubos[i]);
 	}
@@ -1325,4 +1331,52 @@ render_scratch_images_fini(struct render_resources *r, struct render_scratch_ima
 	}
 
 	U_ZERO(&rsi->extent);
+}
+
+bool
+render_resources_set_mirror_mesh(struct render_resources *r, const struct xrt_normalized_rect *uv)
+{
+	struct vk_bundle *vk = r->vk;
+	const uint32_t floats = r->mesh.stride / sizeof(float);
+	VkResult ret;
+
+	// One cell in the layout of the distortion mesh (position, then r, g and b uv), so the same pipelines draw it
+	float corners[4][8];
+	for (uint32_t i = 0; i < 4; i++) {
+		float u = (float)(i % 2), v = (float)(i / 2);
+		float su = uv->x + u * uv->w, sv = uv->y + v * uv->h;
+		float vertex[8] = {u * 2.0f - 1.0f, v * 2.0f - 1.0f, su, sv, su, sv, su, sv};
+		memcpy(corners[i], vertex, sizeof(vertex));
+	}
+	// Indexed meshes are triangle strips, others triangle lists
+	const uint32_t list[6] = {0, 2, 1, 1, 2, 3};
+	const int strip[6] = {0, 0, 2, 1, 3, 3};
+	const bool indexed = r->mesh.index_count_total > 0;
+	const uint32_t vertex_count = indexed ? 4 : 6;
+
+	float *vertices = U_TYPED_ARRAY_CALLOC(float, floats * 6);
+	for (uint32_t i = 0; i < vertex_count; i++) {
+		memcpy(&vertices[i * floats], corners[indexed ? i : list[i]], sizeof(corners[0]));
+	}
+
+	VkMemoryPropertyFlags memory = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+	if (r->mesh.mirror_vbo.buffer == VK_NULL_HANDLE) {
+		ret = render_buffer_init(vk, &r->mesh.mirror_vbo, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, memory,
+		                         r->mesh.stride * 6);
+		if (ret == VK_SUCCESS && indexed) {
+			ret = render_buffer_init(vk, &r->mesh.mirror_ibo, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, memory,
+			                         sizeof(strip));
+			if (ret == VK_SUCCESS) {
+				ret = render_buffer_write(vk, &r->mesh.mirror_ibo, (void *)strip, sizeof(strip));
+			}
+		}
+		if (ret != VK_SUCCESS) {
+			free(vertices);
+			VK_ERROR(vk, "Mirror mesh: %s", vk_result_string(ret));
+			return false;
+		}
+	}
+	ret = render_buffer_write(vk, &r->mesh.mirror_vbo, vertices, r->mesh.stride * vertex_count);
+	free(vertices);
+	return ret == VK_SUCCESS;
 }

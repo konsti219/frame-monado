@@ -46,6 +46,9 @@ struct comp_mirror_to_debug_gui
 	int push_every_frame_out_of_X;
 
 	struct u_sink_debug debug_sink;
+
+	//! Also gets the frames when set (the frame shell's mirror device).
+	struct xrt_frame_sink *sink;
 	VkExtent2D image_extent;
 
 	struct vk_image_readback_to_xf_pool *pool;
