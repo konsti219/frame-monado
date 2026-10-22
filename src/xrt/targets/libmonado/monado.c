@@ -384,6 +384,8 @@ mnd_root_get_client_state(mnd_root_t *root, uint32_t client_id, uint32_t *out_fl
 	flags |= (iob->block_hand_tracking) ? MND_CLIENT_HT_BLOCKED : 0u;
 	flags |= (iob->block_inputs) ? MND_CLIENT_INPUTS_BLOCKED : 0u;
 	flags |= (iob->block_outputs) ? MND_CLIENT_OUTPUTS_BLOCKED : 0u;
+	flags |= root->app_state.presentation_mode == 1 ? MND_CLIENT_PRESENTATION_DEFAULT : 0u;
+	flags |= root->app_state.presentation_mode == 2 ? MND_CLIENT_PRESENTATION_OVERLAY : 0u;
 	*out_flags = flags;
 
 	return MND_SUCCESS;
@@ -402,6 +404,45 @@ mnd_root_set_client_primary(mnd_root_t *root, uint32_t client_id)
 	}
 
 	return MND_SUCCESS;
+}
+
+mnd_result_t
+mnd_root_set_input_capture(mnd_root_t *root,
+                           const char *left_profile,
+                           const char *right_profile,
+                           const char *const *paths,
+                           uint32_t count,
+                           uint32_t pose_mask)
+{
+	CHECK_NOT_NULL(root);
+	CHECK_NOT_NULL(left_profile);
+	CHECK_NOT_NULL(right_profile);
+	if (count > IPC_CAPTURE_MAX_PATHS || pose_mask > 3 || (count && !paths)) {
+		return MND_ERROR_INVALID_VALUE;
+	}
+	struct ipc_input_capture capture = {.count = count, .pose_mask = pose_mask};
+	const char *profiles[] = {left_profile, right_profile};
+	for (uint32_t hand = 0; hand < 2; hand++) {
+		if (strlen(profiles[hand]) >= IPC_CAPTURE_PATH_SIZE)
+			return MND_ERROR_INVALID_VALUE;
+		strcpy(capture.profiles[hand], profiles[hand]);
+	}
+	for (uint32_t i = 0; i < count; i++) {
+		if (!paths[i] || strlen(paths[i]) >= IPC_CAPTURE_PATH_SIZE)
+			return MND_ERROR_INVALID_VALUE;
+		strcpy(capture.paths[i], paths[i]);
+	}
+	xrt_result_t r = ipc_call_system_set_input_capture(&root->ipc_c, &capture);
+	return r == XRT_SUCCESS ? MND_SUCCESS : MND_ERROR_OPERATION_FAILED;
+}
+
+mnd_result_t
+mnd_root_set_client_presentation(mnd_root_t *root, uint32_t client_id, uint32_t mode, bool visible)
+{
+	CHECK_NOT_NULL(root);
+	CHECK_CLIENT_ID(client_id);
+	xrt_result_t r = ipc_call_system_set_client_presentation(&root->ipc_c, client_id, mode, visible);
+	return r == XRT_SUCCESS ? MND_SUCCESS : MND_ERROR_OPERATION_FAILED;
 }
 
 mnd_result_t

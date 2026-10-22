@@ -26,7 +26,7 @@ extern "C" {
 //! Major version of the API.
 #define MND_API_VERSION_MAJOR 1
 //! Minor version of the API.
-#define MND_API_VERSION_MINOR 9
+#define MND_API_VERSION_MINOR 11
 //! Patch version of the API.
 #define MND_API_VERSION_PATCH 0
 
@@ -71,6 +71,8 @@ typedef enum mnd_client_flags
 	MND_CLIENT_INPUTS_BLOCKED = (1u << 8u),
 	//! Supported in version 1.6 and above.
 	MND_CLIENT_OUTPUTS_BLOCKED = (1u << 9u),
+	MND_CLIENT_PRESENTATION_DEFAULT = (1u << 10u),
+	MND_CLIENT_PRESENTATION_OVERLAY = (1u << 11u),
 } mnd_client_flags_t;
 
 /*!
@@ -359,6 +361,15 @@ mnd_root_get_client_state(mnd_root_t *root, uint32_t client_id, uint32_t *out_fl
  */
 mnd_result_t
 mnd_root_set_client_primary(mnd_root_t *root, uint32_t client_id);
+
+//! Captured physical OpenXR paths, owned by this connection; its process's sessions are exempt.
+mnd_result_t
+mnd_root_set_input_capture(mnd_root_t *root, const char *left_profile, const char *right_profile,
+                           const char *const *paths, uint32_t count, uint32_t pose_mask);
+
+//! Presentation mode: 0 automatic, 1 default app, 2 overlay; visible applies to overlays.
+mnd_result_t
+mnd_root_set_client_presentation(mnd_root_t *root, uint32_t client_id, uint32_t mode, bool visible);
 
 /*!
  * Set the client at the given index as "focused".

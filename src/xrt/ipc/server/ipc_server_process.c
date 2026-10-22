@@ -293,6 +293,7 @@ init_server_state(struct ipc_server *s)
 
 	s->global_state.active_client_index = -1; // we start off with no active client.
 	s->global_state.last_active_client_index = -1;
+	s->global_state.previous_default_client_id = 0;
 	s->global_state.connected_client_count = 0; // No clients connected initially
 	s->current_slot_index = 0;
 
@@ -452,11 +453,18 @@ main_loop(struct ipc_server *s)
  *
  */
 
+static bool
+client_is_overlay(volatile struct ipc_client_state *ics)
+{
+	uint32_t mode = ics->client_state.presentation_mode;
+	return mode == 2 || (mode == 0 && (ics->client_state.session_overlay || ics->client_state.session_alpha));
+}
+
 static void
 handle_overlay_client_events(volatile struct ipc_client_state *ics, int active_id, int prev_active_id)
 {
 	// Is an overlay session?
-	if (!ics->client_state.session_overlay) {
+	if (!client_is_overlay(ics)) {
 		return;
 	}
 
@@ -500,9 +508,9 @@ handle_focused_client_events(volatile struct ipc_client_state *ics, int active_i
 	}
 
 	// Set all overlays to always active and focused.
-	if (ics->client_state.session_overlay) {
-		visible = true;
-		focused = true;
+	if (client_is_overlay(ics)) {
+		visible = !ics->client_state.presentation_hidden;
+		focused = visible;
 		z_order = ics->client_state.z_order;
 	}
 
@@ -545,7 +553,7 @@ update_server_state_locked(struct ipc_server *s)
 
 		volatile struct ipc_client_state *ics = &s->threads[s->global_state.active_client_index].ics;
 
-		if (ics->client_state.session_active &&
+		if (ics->client_state.session_active && !client_is_overlay(ics) &&
 		    s->global_state.active_client_index == s->global_state.last_active_client_index) {
 			return;
 		}
@@ -566,7 +574,7 @@ update_server_state_locked(struct ipc_server *s)
 	// do we have a fallback application?
 	for (uint32_t i = 0; i < IPC_MAX_CLIENTS; i++) {
 		volatile struct ipc_client_state *ics = &s->threads[i].ics;
-		if (ics->client_state.session_overlay == false && ics->server_thread_index >= 0 &&
+		if (!client_is_overlay(ics) && ics->server_thread_index >= 0 &&
 		    ics->client_state.session_active) {
 			fallback_active_application = i;
 			set_idle = false;
@@ -578,11 +586,15 @@ update_server_state_locked(struct ipc_server *s)
 	// instead.
 	if (s->global_state.active_client_index >= 0) {
 		volatile struct ipc_client_state *ics = &s->threads[s->global_state.active_client_index].ics;
-		if (!(ics->client_state.session_overlay == false && ics->client_state.session_active)) {
+		if (!(!client_is_overlay(ics) && ics->client_state.session_active)) {
 			s->global_state.active_client_index = fallback_active_application;
 		}
 	}
 
+
+	if (s->global_state.active_client_index < 0) {
+		s->global_state.active_client_index = fallback_active_application;
+	}
 
 	// if we have no applications to fallback to, enable the idle
 	// wallpaper.
@@ -635,6 +647,7 @@ get_client_app_state_locked(struct ipc_server *s, uint32_t client_id, struct ipc
 	}
 
 	struct ipc_app_state ias = ics->client_state;
+	ias.session_overlay = client_is_overlay(ics);
 
 	// @todo: track this data in the ipc_client_state struct
 	ias.primary_application = false;
@@ -663,11 +676,58 @@ set_active_client_locked(struct ipc_server *s, uint32_t client_id)
 	int index = ics->server_thread_index;
 
 	if (index != s->global_state.active_client_index) {
+		s->global_state.previous_default_client_id = s->global_state.active_client_index >= 0
+		    ? s->threads[s->global_state.active_client_index].ics.client_state.id : 0;
 		s->global_state.active_client_index = index;
 		update_server_state_locked(s);
 	}
 
 	return XRT_SUCCESS;
+}
+
+static void
+presentation_changed_locked(struct ipc_server *s, volatile struct ipc_client_state *ics)
+{
+	if (s->global_state.active_client_index == ics->server_thread_index && client_is_overlay(ics)) {
+		uint32_t id = s->global_state.previous_default_client_id;
+		volatile struct ipc_client_state *previous = id != 0 ? find_client_locked(s, id) : NULL;
+		s->global_state.active_client_index = previous != NULL ? previous->server_thread_index : -1;
+	}
+	// Presentation changes need a flush even when the default app stays the same.
+	s->global_state.last_active_client_index = -1;
+	update_server_state_locked(s);
+}
+
+xrt_result_t
+ipc_server_set_client_presentation(struct ipc_server *s, uint32_t client_id, uint32_t mode, bool visible)
+{
+	if (mode > 2) {
+		return XRT_ERROR_IPC_FAILURE;
+	}
+	os_mutex_lock(&s->global_state.lock);
+	volatile struct ipc_client_state *ics = find_client_locked(s, client_id);
+	if (ics == NULL) {
+		os_mutex_unlock(&s->global_state.lock);
+		return XRT_ERROR_IPC_FAILURE;
+	}
+	ics->client_state.presentation_mode = mode;
+	ics->client_state.presentation_hidden = !visible;
+	presentation_changed_locked(s, ics);
+	os_mutex_unlock(&s->global_state.lock);
+	return XRT_SUCCESS;
+}
+
+void
+ipc_server_note_alpha_frame(volatile struct ipc_client_state *ics, enum xrt_blend_mode mode)
+{
+	if (mode != XRT_BLEND_MODE_ALPHA_BLEND || ics->client_state.session_alpha) {
+		return;
+	}
+	struct ipc_server *s = ics->server;
+	os_mutex_lock(&s->global_state.lock);
+	ics->client_state.session_alpha = true;
+	presentation_changed_locked(s, ics);
+	os_mutex_unlock(&s->global_state.lock);
 }
 
 static xrt_result_t
@@ -969,9 +1029,10 @@ ipc_server_activate_session(volatile struct ipc_client_state *ics)
 	// Multiple threads could call this at the same time.
 	os_mutex_lock(&s->global_state.lock);
 
+	ics->client_state.session_alpha = false;
 	ics->client_state.session_active = true;
 
-	if (ics->client_state.session_overlay) {
+	if (client_is_overlay(ics)) {
 		// For new active overlay sessions only update this session.
 		handle_focused_client_events(ics, s->global_state.active_client_index,
 		                             s->global_state.last_active_client_index);

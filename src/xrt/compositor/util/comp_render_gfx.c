@@ -165,6 +165,9 @@ view_foveation(const struct xrt_layer_projection_view_data *v)
 	return v->foveation[0].segment_count > 0 && v->foveation[1].segment_count > 0 ? v->foveation : NULL;
 }
 
+static void
+foveation_lut(const struct xrt_foveation_axis *axis, float out[RENDER_FOVEATION_LUT_SIZE][4]);
+
 /// The segments of a foveated axis as normalized breakpoints from the view into the image.
 static int32_t
 foveation_points(const struct xrt_foveation_axis *axis, float out[RENDER_FOVEATION_MAX_POINTS][4])
@@ -685,7 +688,7 @@ do_projection_layer(struct render_gfx *render,
 	VkImageView src_image_view = get_image_view(image, layer_data->flags, array_index);
 
 	// Fully initialised below.
-	struct render_gfx_layer_projection_data data;
+	struct render_gfx_layer_projection_data data = {0};
 
 	// Used for Subimage and OpenGL flip.
 	set_post_transform_rect(   //
@@ -702,6 +705,11 @@ do_projection_layer(struct render_gfx *render,
 	calc_mvp_rot_only(state, layer_data, &vd->pose, &scale, &data.mvp);
 
 	apply_bias_and_scale_from_layer(layer_data, &data.color_scale, &data.color_bias);
+	if (view_foveation(vd) != NULL) {
+		data.foveation_enabled[0] = 1;
+		foveation_lut(&vd->foveation[0], data.lut_x);
+		foveation_lut(&vd->foveation[1], data.lut_y);
+	}
 
 	// Can fail if we have too many layers.
 	VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
@@ -1687,15 +1695,6 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 				U_LOG_I("Drawing the projection layer directly in the distortion pass with overlays (timewarp %s)",
 				        d->do_timewarp ? "enabled" : "disabled");
 				logged = true;
-			}
-		}
-
-		for (uint32_t i = 0; i < squash_count; i++) {
-			static bool warned = false;
-			if (!warned && squashed[i].data.type == XRT_LAYER_PROJECTION &&
-			    view_foveation(&squashed[i].data.proj.v[0]) != NULL) {
-				U_LOG_W("A foveated projection layer is squashed, which doesn't expand it");
-				warned = true;
 			}
 		}
 
