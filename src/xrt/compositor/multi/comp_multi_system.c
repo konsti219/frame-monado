@@ -357,6 +357,13 @@ transfer_layers_locked(struct multi_system_compositor *msc, int64_t display_time
 		for (uint32_t i = 0; i < mc->delivered.layer_count; i++) {
 			struct multi_layer_entry *layer = &mc->delivered.layers[i];
 
+			// Like SteamVR: in an alpha blended frame the projection's own alpha shows the room, with or
+			// without source alpha (Unreal sets none)
+			if (mc->delivered.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND &&
+			    (layer->data.type == XRT_LAYER_PROJECTION || layer->data.type == XRT_LAYER_PROJECTION_DEPTH)) {
+				layer->data.flags |= XRT_LAYER_COMPOSITION_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+			}
+
 			switch (layer->data.type) {
 			case XRT_LAYER_PROJECTION: do_projection_layer(xc, mc, layer, i); break;
 			case XRT_LAYER_PROJECTION_DEPTH: do_projection_layer_depth(xc, mc, layer, i); break;

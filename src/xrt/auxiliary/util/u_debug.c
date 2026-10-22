@@ -73,7 +73,13 @@ get_option_raw(char *chars, size_t char_count, const char *name)
 
 	const struct prop_info *pi = __system_property_find(prefixed);
 	if (pi == NULL) {
-		return NULL;
+		// The environment otherwise (Lepton passes LEPTON_ENV_* to apps)
+		const char *raw = getenv(name);
+		if (raw == NULL) {
+			return NULL;
+		}
+		snprintf(chars, char_count, "%s", raw);
+		return chars;
 	}
 
 	struct android_read_arg a = {.chars = chars, .char_count = char_count};

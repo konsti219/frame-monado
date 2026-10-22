@@ -10,5 +10,5 @@ cmake -S /work -B "$build/monado" -G Ninja \
 cmake --build "$build/monado" --parallel "$(nproc)"
 DESTDIR="$build/stage" cmake --install "$build/monado"
 install -Dm755 /usr/lib/aarch64-linux-gnu/libjpeg.so.62 "$build/stage/home/steamos/.local/opt/monado/lib/libjpeg.so.62"
-find "$build/stage" -type f \( -name '*.so' -o -name '*.so.*' -o -path "$build/stage/home/steamos/.local/opt/monado/bin/*" \) \
+find "$build/stage" -type f ! -path '*/lib/x86_64-linux-gnu/*' \( -name '*.so' -o -name '*.so.*' -o -path "$build/stage/home/steamos/.local/opt/monado/bin/*" \) \
     -exec aarch64-linux-gnu-strip --strip-debug {} +

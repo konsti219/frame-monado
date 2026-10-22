@@ -1,0 +1,8 @@
+{
+    "file_format_version": "1.0.0",
+    "runtime": {
+        "name": "Monado",
+        "library_path": "../../../$LIB/libopenxr_monado.so",
+        "MND_libmonado_path": "../../../lib/libmonado.so"
+    }
+}

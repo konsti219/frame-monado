@@ -55,7 +55,7 @@
 #include "android/android_ahardwarebuffer_allocator.h"
 #endif
 
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 #include "xrt/xrt_android.h"
 #include "android/ipc_client_android.h"
 #include "android/android_instance_base.h"
@@ -80,7 +80,7 @@ struct ipc_client_instance
 
 	struct ipc_connection ipc_c;
 
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 	struct android_instance_base android;
 #endif
 };
@@ -273,7 +273,7 @@ ipc_client_instance_destroy(struct xrt_instance *xinst)
 	// service considers us to be connected until fd is closed
 	ipc_client_connection_fini(&ii->ipc_c);
 
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 	android_instance_base_cleanup(&(ii->android), xinst);
 	ipc_client_android_destroy(&(ii->ipc_c.ica));
 #endif // XRT_OS_ANDROID
@@ -314,7 +314,7 @@ ipc_instance_create(const struct xrt_instance_info *i_info, struct xrt_instance 
 #endif
 
 	xrt_result_t xret;
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 	xret = android_instance_base_init(&ii->android, &ii->base, i_info);
 	if (xret != XRT_SUCCESS) {
 		free(ii);
@@ -324,7 +324,7 @@ ipc_instance_create(const struct xrt_instance_info *i_info, struct xrt_instance 
 
 	xret = ipc_client_connection_init(&ii->ipc_c, debug_get_log_option_ipc_log(), i_info);
 	if (xret != XRT_SUCCESS) {
-#ifdef XRT_OS_ANDROID
+#if defined(XRT_OS_ANDROID) && !defined(XRT_FEATURE_ANDROID_HOSTED)
 		android_instance_base_cleanup(&(ii->android), &(ii->base));
 #endif
 		free(ii);
