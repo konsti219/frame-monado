@@ -8,6 +8,7 @@
  */
 
 #include <openvr_driver.h>
+#include <algorithm>
 #include <optional>
 #include <cstring>
 #include <map>
@@ -18,6 +19,7 @@
 #include "util/u_logging.h"
 #include "util/u_debug.h"
 #include "util/u_json.h"
+#include "util/u_config_json.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -72,11 +74,25 @@ Settings::Settings(const std::string &steam_install, const std::string &steamvr_
 	}
 	// Values SteamVR provides at runtime rather than through settings files (as its logs show them)
 	if (driver_name == "cv") {
-		layers.push_back(cJSON_Parse(R"({
-		    "steamvr": {"allowEyeTracking": true},
+		cJSON *layer = cJSON_Parse(R"({
+		    "steamvr": {"allowEyeTracking": true, "eyeTrackingRateMax": 90.0},
 		    "driver_cv": {"controllerTracking3": "alternate", "infraredEmittersMode": 2,
 		                  "enableHmdAngularAcceleration": true}
-		})"));
+		})");
+		// The eye cameras' rate: driver_cv asks the eye service for eyeTrackingRateMin while gaze dependent
+		// eye-to-head is off (frame_hmd's settings: 15 fps); frame.eye_tracking_fps in Monado's config
+		float eye_fps = 72.0f;
+		struct u_config_json json = {};
+		u_config_json_open_or_create_main_file(&json);
+		const cJSON *frame = json.root != nullptr ? u_json_get(json.root, "frame") : nullptr;
+		if (frame != nullptr) {
+			u_json_get_float(u_json_get(frame, "eye_tracking_fps"), &eye_fps);
+		}
+		u_config_json_close(&json);
+		eye_fps = std::clamp(eye_fps, 15.0f, 90.0f);
+		U_LOG_I("Eye cameras at %.0f fps", eye_fps);
+		cJSON_AddNumberToObject(cJSON_GetObjectItemCaseSensitive(layer, "steamvr"), "eyeTrackingRateMin", eye_fps);
+		layers.push_back(layer);
 	}
 	analog_gain = debug_get_float_option_lh_default_brightness();
 }
