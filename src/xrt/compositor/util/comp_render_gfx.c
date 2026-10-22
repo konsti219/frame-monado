@@ -793,7 +793,7 @@ quad_direct_scissor(const struct render_resources *r,
 {
 	const render_scissor_data_t *full = &d->views[view].target.scissor_data;
 	*out = *full;
-	if (!r->mesh.has_inverse) {
+	if (!r->mesh.has_inverse || d->mirror) {
 		return;
 	}
 
@@ -1702,7 +1702,7 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 		/*
 		 * Layer squashing.
 		 */
-		if (!scratch_hidden(projection, d)) {
+		if (!d->mirror && !scratch_hidden(projection, d)) {
 			comp_render_gfx_layers( //
 			    render,             //
 			    squashed,           //
@@ -1711,7 +1711,9 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 			    transition_to);     //
 		}
 
-		sf_comp_passthrough_trace(d->passthrough, d, layers, layer_count);
+		if (!d->mirror) {
+			sf_comp_passthrough_trace(d->passthrough, d, layers, layer_count);
+		}
 
 		/*
 		 * Distortion.

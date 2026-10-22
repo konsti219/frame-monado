@@ -676,6 +676,9 @@ comp_mirror_do_blit(struct comp_mirror_to_debug_gui *m,
 	wrap = NULL;
 
 	u_sink_debug_push_frame(&m->debug_sink, frame);
+	if (m->sink != NULL) {
+		xrt_sink_push_frame(m->sink, frame);
+	}
 
 	u_frame_times_widget_push_sample(&m->push_frame_times, predicted_display_time_ns);
 

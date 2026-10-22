@@ -21,6 +21,8 @@ add_library(
 	comp_target_swapchain.h
 	comp_window.h
 	comp_window_debug_image.c
+	comp_frame_mirror.c
+	comp_frame_mirror.h
 	comp_mirror_to_debug_gui.c
 	comp_mirror_to_debug_gui.h
 	)

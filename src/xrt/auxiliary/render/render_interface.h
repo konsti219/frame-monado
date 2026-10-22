@@ -460,6 +460,10 @@ struct render_resources
 		//! Undistorted (green) uv to mesh position, per view, for bounding layers drawn in the distortion pass.
 		struct xrt_vec2 inverse[XRT_MAX_VIEWS][RENDER_MESH_INVERSE_SIZE][RENDER_MESH_INVERSE_SIZE];
 		bool has_inverse;
+
+		//! Flat mesh over part of a view's uv space, without lens distortion (render_resources_set_mirror_mesh).
+		struct render_buffer mirror_vbo;
+		struct render_buffer mirror_ibo;
 	} mesh;
 
 	/*!
@@ -589,6 +593,14 @@ render_resources_init(struct render_resources *r,
  */
 void
 render_resources_fini(struct render_resources *r);
+
+/*!
+ * Sets the flat mesh render_gfx::mirror_mesh draws with: the whole target shows the @p uv part of a view.
+ *
+ * @public @memberof render_resources
+ */
+bool
+render_resources_set_mirror_mesh(struct render_resources *r, const struct xrt_normalized_rect *uv);
 
 /*!
  * Creates or recreates the compute distortion textures if necessary.
@@ -872,6 +884,9 @@ struct render_gfx
 
 	//! The current target we are rendering to, can change during command building.
 	struct render_gfx_target_resources *rtr;
+
+	//! Draw meshes with the flat mirror mesh instead of the distortion mesh.
+	bool mirror_mesh;
 };
 
 /*!

@@ -1261,7 +1261,7 @@ mesh_draw_with_pipeline(struct render_gfx *render, uint32_t mesh_index, VkDescri
 	 * Vertex buffer.
 	 */
 
-	VkBuffer buffers[1] = {r->mesh.vbo.buffer};
+	VkBuffer buffers[1] = {render->mirror_mesh ? r->mesh.mirror_vbo.buffer : r->mesh.vbo.buffer};
 	VkDeviceSize offsets[1] = {0};
 	static_assert(ARRAY_SIZE(buffers) == ARRAY_SIZE(offsets), "buffers and offsets array size mismatch");
 
@@ -1277,7 +1277,15 @@ mesh_draw_with_pipeline(struct render_gfx *render, uint32_t mesh_index, VkDescri
 	 * Draw with indices or not?
 	 */
 
-	if (r->mesh.index_count_total > 0) {
+	if (render->mirror_mesh) {
+		// One cell: an indexed strip of 6 or a list of 6 vertices, like the distortion mesh
+		if (r->mesh.index_count_total > 0) {
+			vk->vkCmdBindIndexBuffer(r->cmd, r->mesh.mirror_ibo.buffer, 0, VK_INDEX_TYPE_UINT32);
+			vk->vkCmdDrawIndexed(r->cmd, 6, 1, 0, 0, 0);
+		} else {
+			vk->vkCmdDraw(r->cmd, 6, 1, 0, 0);
+		}
+	} else if (r->mesh.index_count_total > 0) {
 		vk->vkCmdBindIndexBuffer(  //
 		    r->cmd,                //
 		    r->mesh.ibo.buffer,    // buffer
