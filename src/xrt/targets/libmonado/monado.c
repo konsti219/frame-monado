@@ -342,6 +342,23 @@ mnd_root_get_client_name(mnd_root_t *root, uint32_t client_id, const char **out_
 }
 
 mnd_result_t
+mnd_root_get_client_pid(mnd_root_t *root, uint32_t client_id, int32_t *out_pid)
+{
+	CHECK_NOT_NULL(root);
+	CHECK_CLIENT_ID(client_id);
+	CHECK_NOT_NULL(out_pid);
+
+	mnd_result_t mret = get_client_info(root, client_id);
+	if (mret < 0) {
+		return mret; // Prints error.
+	}
+
+	*out_pid = (int32_t)root->app_state.pid;
+
+	return MND_SUCCESS;
+}
+
+mnd_result_t
 mnd_root_get_client_state(mnd_root_t *root, uint32_t client_id, uint32_t *out_flags)
 {
 	CHECK_NOT_NULL(root);
