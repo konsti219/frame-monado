@@ -96,6 +96,24 @@ struct ipc_swapchain_data
  *
  * @ingroup ipc_server
  */
+struct ipc_capture_input_state {
+    bool held;
+    uint32_t group;
+    bool initialized;
+    struct xrt_input previous;
+};
+
+struct ipc_capture_device_state {
+    struct xrt_device *device;
+    uint32_t count;
+    uint64_t roles_generation;
+    struct ipc_capture_input_state *inputs;
+    struct {
+        enum xrt_input_name name;
+        struct xrt_space_relation relation;
+    } poses[4];
+};
+
 struct ipc_client_state
 {
 	//! Link back to the main server.
@@ -144,6 +162,8 @@ struct ipc_client_state
 		 */
 		struct xrt_app_system *xasys[IPC_MAX_CLIENT_APP_SYSTEMS];
 	} objects;
+
+	struct ipc_capture_device_state capture_devices[XRT_SYSTEM_MAX_DEVICES];
 
 	//! Session for this client.
 	struct xrt_session *xs;
@@ -450,9 +470,19 @@ struct ipc_server
 	{
 		int active_client_index;
 		int last_active_client_index;
+		uint32_t previous_default_client_id;
 
 		// Counter for total number of connected clients
 		uint32_t connected_client_count;
+
+        struct {
+            uint32_t owner_id;
+            pid_t owner_pid;
+            struct ipc_input_capture policy;
+            uint64_t roles_generation;
+            enum xrt_input_name inputs[2][IPC_CAPTURE_MAX_PATHS];
+            uint32_t counts[2];
+        } capture;
 
 		struct os_mutex lock;
 	} global_state;
@@ -496,6 +526,12 @@ ipc_server_get_client_app_state(struct ipc_server *s, uint32_t client_id, struct
  */
 xrt_result_t
 ipc_server_set_active_client(struct ipc_server *s, uint32_t client_id);
+
+xrt_result_t
+ipc_server_set_client_presentation(struct ipc_server *s, uint32_t client_id, uint32_t mode, bool visible);
+
+void
+ipc_server_note_alpha_frame(volatile struct ipc_client_state *ics, enum xrt_blend_mode mode);
 
 /*!
  * Toggle the io for this client.

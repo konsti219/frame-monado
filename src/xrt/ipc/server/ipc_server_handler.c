@@ -19,6 +19,7 @@
 
 #include "server/ipc_server.h"
 #include "server/ipc_server_objects.h"
+#include "server/ipc_server_input_capture.h"
 #include "ipc_server_generated.h"
 #include "xrt/xrt_defines.h"
 #include "xrt/xrt_device.h"
@@ -228,13 +229,6 @@ send_device_inputs(volatile struct ipc_client_state *ics, struct xrt_device *xde
 	}
 
 	volatile struct ipc_client_io_blocks *iob = &ics->client_state.io_blocks;
-	// Send inputs as varlen data
-	// We don't need to do any filtering, send the inputs as-is.
-	if (!iob->block_poses && !iob->block_hand_tracking && !iob->block_inputs) {
-		// Send the full input state
-		xret = ipc_send(imc, xdev->inputs, input_size);
-		IPC_CHK_ALWAYS_RET(ics->server, xret, "ipc_send(inputs)");
-	}
 
 	struct xrt_input filtered[1024];
 	if (ARRAY_SIZE(filtered) < xdev->input_count) {
@@ -248,7 +242,7 @@ send_device_inputs(volatile struct ipc_client_state *ics, struct xrt_device *xde
 		bool blocked = false;
 		switch (XRT_GET_INPUT_TYPE(src->name)) {
 		case XRT_INPUT_TYPE_POSE: //
-			blocked = iob->block_poses && dst->name != XRT_INPUT_GENERIC_HEAD_POSE;
+			blocked = iob->block_poses && src->name != XRT_INPUT_GENERIC_HEAD_POSE;
 			break;
 		case XRT_INPUT_TYPE_HAND_TRACKING: //
 			blocked = iob->block_hand_tracking;
@@ -274,6 +268,7 @@ send_device_inputs(volatile struct ipc_client_state *ics, struct xrt_device *xde
 		}
 	}
 
+	ipc_capture_filter(ics, xdev, filtered);
 	xret = ipc_send(imc, filtered, input_size);
 	IPC_CHK_ALWAYS_RET(ics->server, xret, "ipc_send(filtered inputs)");
 }
@@ -1382,6 +1377,7 @@ ipc_handle_compositor_layer_sync(volatile struct ipc_client_state *ics,
 	 * Transfer data to underlying compositor.
 	 */
 
+	ipc_server_note_alpha_frame(ics, slot.data.env_blend_mode);
 	xrt_comp_layer_begin(ics->xc, &slot.data);
 
 	xrt_result_t xret = _update_layers(ics, &slot);
@@ -1436,6 +1432,7 @@ ipc_handle_compositor_layer_sync_with_semaphore(volatile struct ipc_client_state
 	 * Transfer data to underlying compositor.
 	 */
 
+	ipc_server_note_alpha_frame(ics, slot.data.env_blend_mode);
 	xrt_comp_layer_begin(ics->xc, &slot.data);
 
 	xrt_result_t xret = _update_layers(ics, &slot);
@@ -1582,6 +1579,13 @@ ipc_handle_system_set_primary_client(volatile struct ipc_client_state *_ics, uin
 	IPC_INFO(s, "System setting active client to %d.", client_id);
 
 	return ipc_server_set_active_client(s, client_id);
+}
+
+xrt_result_t
+ipc_handle_system_set_client_presentation(volatile struct ipc_client_state *ics,
+                                        uint32_t client_id, uint32_t mode, bool visible)
+{
+	return ipc_server_set_client_presentation(ics->server, client_id, mode, visible);
 }
 
 xrt_result_t
@@ -2119,7 +2123,7 @@ ipc_handle_device_get_tracked_pose(volatile struct ipc_client_state *ics,
 	}
 
 	// Get the pose.
-	return xrt_device_get_tracked_pose(xdev, name, at_timestamp, out_relation);
+	return ipc_capture_get_pose(ics, xdev, name, at_timestamp, out_relation);
 }
 
 xrt_result_t

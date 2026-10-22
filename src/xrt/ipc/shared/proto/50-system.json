@@ -28,6 +28,18 @@
 		]
 	},
 
+	"system_set_client_presentation": {
+		"in": [
+			{"name": "id", "type": "uint32_t"},
+			{"name": "mode", "type": "uint32_t"},
+			{"name": "visible", "type": "bool"}
+		]
+	},
+
+	"system_set_input_capture": {
+		"in": [{"name": "capture", "type": "struct ipc_input_capture"}]
+	},
+
 	"system_set_focused_client": {
 		"in": [
 			{"name": "id", "type": "uint32_t"}

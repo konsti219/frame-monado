@@ -32,7 +32,7 @@
 
 
 #define IPC_CRED_SIZE 1    // auth not implemented
-#define IPC_BUF_SIZE 2048  // must be >= largest message length in bytes
+#define IPC_BUF_SIZE 16384  // must be >= largest message length in bytes
 #define IPC_MAX_VIEWS 8    // max views we will return configs for
 #define IPC_MAX_FORMATS 32 // max formats our server-side compositor supports
 #define IPC_MAX_DEVICES 8  // max number of devices we will map using shared mem
@@ -360,6 +360,17 @@ struct ipc_client_description
 	struct xrt_application_info info;
 };
 
+#define IPC_CAPTURE_MAX_PATHS 64
+#define IPC_CAPTURE_PATH_SIZE 128
+
+struct ipc_input_capture
+{
+    char profiles[2][IPC_CAPTURE_PATH_SIZE];
+    char paths[IPC_CAPTURE_MAX_PATHS][IPC_CAPTURE_PATH_SIZE];
+    uint32_t count;
+    uint32_t pose_mask;
+};
+
 struct ipc_client_list
 {
 	uint32_t ids[IPC_MAX_CLIENTS];
@@ -394,6 +405,9 @@ struct ipc_app_state
 	bool session_visible;
 	bool session_focused;
 	bool session_overlay;
+	bool session_alpha;
+	bool presentation_hidden;
+	uint32_t presentation_mode;
 	struct ipc_client_io_blocks io_blocks;
 	uint32_t z_order;
 	pid_t pid;
