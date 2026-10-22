@@ -28,6 +28,10 @@
 #include <unistd.h>
 #endif
 
+#ifdef XRT_OS_LINUX
+#include <sys/socket.h>
+#endif
+
 
 /*
  *
@@ -341,6 +345,14 @@ ipc_handle_instance_describe_client(volatile struct ipc_client_state *ics,
 {
 	ics->client_state.info = client_desc->info;
 	ics->client_state.pid = client_desc->pid;
+#ifdef XRT_OS_LINUX
+	// A client in a container (Lepton, Flatpak) reports its own namespace's pid: the socket's peer is ours
+	struct ucred cred;
+	socklen_t cred_size = sizeof(cred);
+	if (getsockopt(ics->imc.ipc_handle, SOL_SOCKET, SO_PEERCRED, &cred, &cred_size) == 0 && cred.pid > 0) {
+		ics->client_state.pid = cred.pid;
+	}
+#endif
 
 	struct u_pp_sink_stack_only sink;
 	u_pp_delegate_t dg = u_pp_sink_stack_only_init(&sink);
