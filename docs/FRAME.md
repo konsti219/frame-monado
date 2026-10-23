@@ -6,8 +6,8 @@ passthrough, compositor and floor estimation.
 ```sh
 git clone git+ssh://github.com_konsti219/konsti219/frame-monado.git
 cd frame-monado
-./build-headset
-./deploy
+just build
+just deploy
 ```
 
 Builds run on the PC in the Podman cross-compilation SDK. Sources are tracked normally and edited here;
@@ -32,14 +32,14 @@ through Steam's normal home-directory mount. These settings belong to the shell 
 system runtime selection alone.
 
 Android games (Lepton, Steam's Android compatibility tool) get an Android build of the client
-(`lib/android-arm64/libopenxr_monado.so`, `XRT_FEATURE_ANDROID_HOSTED`, NDK fetched by `build-headset`). It talks to
+(`lib/android-arm64/libopenxr_monado.so`, `XRT_FEATURE_ANDROID_HOSTED`, NDK fetched by `just build`). It talks to
 the Linux service like any other client: socket in `/data/steamvr/runtime` (Lepton's mount of `steamvr path`, which
 the frame shell points at a folder with this client and a hard link to the socket), images as dma-buf fds, frames
 signalled with sync files, the Linux layer limit (the IPC shared memory layout) and debug options from the
 environment (`LEPTON_ENV_XRT_LOG=debug` and so on). Projection layers of alpha blended frames use their alpha
 whether or not they set source alpha, as SteamVR does: Unreal games set none.
 
-`headset/` contains SteamOS session integration and diagnostic scripts. `setup-rt.sh` creates the runtime
+`headset/` contains SteamOS session integration. `setup-rt.sh` creates the runtime
 layout using the headset's installed SteamVR driver and the deployed Monado shim. SteamOS session/SDDM
 setup remains machine configuration, not a build requirement.
 
