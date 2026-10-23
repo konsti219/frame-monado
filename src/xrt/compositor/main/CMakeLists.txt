@@ -23,6 +23,8 @@ add_library(
 	comp_window_debug_image.c
 	comp_frame_mirror.c
 	comp_frame_mirror.h
+	comp_frame_splash.c
+	comp_frame_splash.h
 	comp_mirror_to_debug_gui.c
 	comp_mirror_to_debug_gui.h
 	)
@@ -37,6 +39,15 @@ target_link_libraries(
 		aux_render
 		aux_render_cache
 	)
+
+# The startup splash's logo (256x256 RGBA) as a C array
+set(LOGO_RGBA ${CMAKE_CURRENT_SOURCE_DIR}/frame_shell_logo.rgba)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LOGO_RGBA})
+file(READ ${LOGO_RGBA} LOGO_HEX HEX)
+string(REGEX REPLACE "(..)" "0x\\1," LOGO_BYTES "${LOGO_HEX}")
+file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/frame_shell_logo.h
+	CONTENT "static const unsigned char frame_shell_logo[] = {${LOGO_BYTES}};\n")
+target_include_directories(comp_main PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 if(XRT_HAVE_XCB)
 	target_sources(comp_main PRIVATE comp_window_xcb.c)

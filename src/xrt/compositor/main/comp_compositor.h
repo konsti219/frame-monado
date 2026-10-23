@@ -162,6 +162,9 @@ struct comp_compositor
 
 	//! If true, part of the compositor startup will be delayed until a session is started
 	bool deferred_surface;
+
+	//! Startup splash, until the head is first tracked
+	struct sf_comp_splash *splash;
 };
 
 
