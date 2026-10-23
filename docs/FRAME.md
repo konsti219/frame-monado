@@ -77,7 +77,7 @@ on the headset, read when the compositor starts (restart `monado.service` after 
     "stop_sched_ext": false,
     "mirror": true,
     "mirror_fps": 60,
-    "eye_tracking_fps": 72
+    "eye_tracking_fps": 36
   }
 }
 ```
@@ -100,9 +100,10 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   SteamVR's v4l2cam provides it (FrameMate's mirroring): the left eye without lens distortion, turned upright and cropped to 16:9 around
   its forward direction, drawn again from the frame's scratch images only while a program streams from the device.
   `mirror_fps` (default 60) caps its rate; at 90 Hz that's every second frame.
-- `eye_tracking_fps` (15–90, default 72): the eye cameras' rate. `driver_cv` asks Valve's eye service for
+- `eye_tracking_fps` (15–90, default 36): the eye cameras' rate. `driver_cv` asks Valve's eye service for
   `steamvr/eyeTrackingRateMin` while gaze dependent eye-to-head is off, which `frame_hmd`'s settings make 15 fps;
-  Monado's `cv` settings layer sets it from this. The eye service takes ~8% of a core at 72 fps (~2.7% at 15).
+  Monado's `cv` settings layer sets it from this. In a panel-on idle comparison, 72 fps cost about 0.5 W more
+  than 15 fps, including the shell's eye expressions; the eye service used ~8% of a core versus ~2%.
 
 The eye gaze is corrected with `~/.config/frame-shell/eye-calibration`, which the frame shell keeps fitting from
 pointer clicks (the user looks at what they click): `corrected = (measured - offset) / gain` per axis in degrees,
