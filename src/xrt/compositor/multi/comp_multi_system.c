@@ -483,7 +483,7 @@ update_session_state_locked(struct multi_system_compositor *msc)
 		break;
 
 	case MULTI_SYSTEM_STATE_STOPPED:
-		if (msc->sessions.active_count == 0) {
+		if (msc->sessions.active_count == 0 && !msc->sessions.startup) {
 			break;
 		}
 
@@ -501,6 +501,10 @@ update_session_state_locked(struct multi_system_compositor *msc)
 
 	case MULTI_SYSTEM_STATE_RUNNING:
 		if (msc->sessions.active_count > 0) {
+			msc->sessions.startup = false;
+			break;
+		}
+		if (msc->sessions.startup) {
 			break;
 		}
 
@@ -509,8 +513,8 @@ update_session_state_locked(struct multi_system_compositor *msc)
 		break;
 
 	case MULTI_SYSTEM_STATE_STOPPING:
-		// Just in case
-		if (msc->sessions.active_count > 0) {
+		// Just in case, or after a warm start
+		if (msc->sessions.active_count > 0 || msc->sessions.startup) {
 			msc->sessions.state = MULTI_SYSTEM_STATE_RUNNING;
 			U_LOG_D("Restarting native session, %u active app session(s).",
 			        (uint32_t)msc->sessions.active_count);
@@ -877,6 +881,7 @@ comp_multi_create_system_compositor(struct xrt_compositor_native *xcn,
 	msc->upaf = upaf;
 	msc->xcn = xcn;
 	msc->sessions.active_count = 0;
+	msc->sessions.startup = true;
 	msc->sessions.state = do_warm_start ? MULTI_SYSTEM_STATE_INIT_WARM_START : MULTI_SYSTEM_STATE_STOPPED;
 	msc->get_view_config_callback = get_view_config_callback;
 

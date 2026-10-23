@@ -63,6 +63,10 @@ cd ../frame-monado-host
 The headset shell/client/server/UI live separately in `frame-shell`. Building or deploying that repository
 does not build or replace the headset Monado runtime.
 
+From the compositor's start until the head is first tracked, it shows only the frame shell logo, head-locked on
+black (`comp_frame_splash.c`, logo from `frame_shell_logo.rgba`). Apps rendering before tracking would show up
+rolled with the panels.
+
 ## Settings
 
 Runtime settings that stay go in the `frame` object of Monado's config file, `~/.config/monado/config_v0.json`

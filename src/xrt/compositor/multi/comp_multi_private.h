@@ -358,6 +358,10 @@ struct multi_system_compositor
 
 		//! Number of active sessions, protected by oth.
 		uint64_t active_count;
+
+		//! Runs the native session before any app's, for the main compositor's startup splash; ends with the
+		//! first active session, protected by oth.
+		bool startup;
 	} sessions;
 
 	/*!

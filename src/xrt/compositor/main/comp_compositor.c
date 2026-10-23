@@ -66,6 +66,7 @@
 #include "util/comp_vulkan.h"
 #include "main/comp_compositor.h"
 #include "main/comp_frame.h"
+#include "main/comp_frame_splash.h"
 
 #ifdef XRT_FEATURE_WINDOW_PEEK
 #include "main/comp_window_peek.h"
@@ -312,6 +313,8 @@ compositor_layer_commit(struct xrt_compositor *xc, xrt_graphics_sync_handle_t sy
 
 	COMP_SPEW(c, "LAYER_COMMIT at %8.3fms", ts_ms());
 
+	sf_comp_splash_apply(c->splash);
+
 	/*
 	 * We have a fast path for single projection layer that goes directly
 	 * to the distortion shader, so no need to use the layer renderer.
@@ -423,6 +426,8 @@ compositor_destroy(struct xrt_compositor *xc)
 
 	// Destroy the scratch images fully, we initialized all of them.
 	chl_scratch_fini(&c->scratch);
+
+	sf_comp_splash_destroy(&c->splash);
 
 	// Make sure we don't have anything to destroy.
 	comp_swapchain_shared_garbage_collect(&c->base.cscs);
@@ -1184,6 +1189,8 @@ comp_main_create_system_compositor(struct xrt_device *xdev,
 	// clang-format on
 
 	COMP_DEBUG(c, "Done %p", (void *)c);
+
+	c->splash = sf_comp_splash_create(c);
 
 	/*!
 	 * @todo Support more like, depth/float formats etc,
