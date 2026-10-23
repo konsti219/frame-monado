@@ -81,7 +81,7 @@ Settings::Settings(const std::string &steam_install, const std::string &steamvr_
 		})");
 		// The eye cameras' rate: driver_cv asks the eye service for eyeTrackingRateMin while gaze dependent
 		// eye-to-head is off (frame_hmd's settings: 15 fps); frame.eye_tracking_fps in Monado's config
-		float eye_fps = 72.0f;
+		float eye_fps = 36.0f;
 		struct u_config_json json = {};
 		u_config_json_open_or_create_main_file(&json);
 		const cJSON *frame = json.root != nullptr ? u_json_get(json.root, "frame") : nullptr;
