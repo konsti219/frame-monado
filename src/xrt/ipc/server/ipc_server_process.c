@@ -502,8 +502,8 @@ handle_focused_client_events(volatile struct ipc_client_state *ics, int active_i
 
 	// Set visible + focused if we are the primary application
 	if (ics->server_thread_index == active_id) {
-		visible = true;
-		focused = true;
+		visible = !ics->server->global_state.background_suppressed;
+		focused = visible;
 		z_order = INT64_MIN;
 	}
 
@@ -511,7 +511,7 @@ handle_focused_client_events(volatile struct ipc_client_state *ics, int active_i
 	if (client_is_overlay(ics)) {
 		visible = !ics->client_state.presentation_hidden;
 		focused = visible;
-		z_order = ics->client_state.z_order;
+		z_order = ics->client_state.z_order == INT64_MIN ? 0 : ics->client_state.z_order;
 	}
 
 	ics->client_state.session_visible = visible;
@@ -553,7 +553,8 @@ update_server_state_locked(struct ipc_server *s)
 
 		volatile struct ipc_client_state *ics = &s->threads[s->global_state.active_client_index].ics;
 
-		if (ics->client_state.session_active && !client_is_overlay(ics) &&
+		if (ics->client_state.session_active && !ics->client_state.presentation_hidden &&
+		    !client_is_overlay(ics) &&
 		    s->global_state.active_client_index == s->global_state.last_active_client_index) {
 			return;
 		}
@@ -574,7 +575,8 @@ update_server_state_locked(struct ipc_server *s)
 	// do we have a fallback application?
 	for (uint32_t i = 0; i < IPC_MAX_CLIENTS; i++) {
 		volatile struct ipc_client_state *ics = &s->threads[i].ics;
-		if (!client_is_overlay(ics) && ics->server_thread_index >= 0 &&
+		if (!s->global_state.default_app_hidden && !client_is_overlay(ics) &&
+		    !ics->client_state.presentation_hidden && ics->server_thread_index >= 0 &&
 		    ics->client_state.session_active) {
 			fallback_active_application = i;
 			set_idle = false;
@@ -586,7 +588,8 @@ update_server_state_locked(struct ipc_server *s)
 	// instead.
 	if (s->global_state.active_client_index >= 0) {
 		volatile struct ipc_client_state *ics = &s->threads[s->global_state.active_client_index].ics;
-		if (!(!client_is_overlay(ics) && ics->client_state.session_active)) {
+		if (s->global_state.default_app_hidden || client_is_overlay(ics) ||
+		    ics->client_state.presentation_hidden || !ics->client_state.session_active) {
 			s->global_state.active_client_index = fallback_active_application;
 		}
 	}
@@ -674,6 +677,8 @@ set_active_client_locked(struct ipc_server *s, uint32_t client_id)
 
 	// The active client is decided by index, so get that from the ics.
 	int index = ics->server_thread_index;
+	ics->client_state.presentation_hidden = false;
+	s->global_state.default_app_hidden = false;
 
 	if (index != s->global_state.active_client_index) {
 		s->global_state.previous_default_client_id = s->global_state.active_client_index >= 0
@@ -688,14 +693,32 @@ set_active_client_locked(struct ipc_server *s, uint32_t client_id)
 static void
 presentation_changed_locked(struct ipc_server *s, volatile struct ipc_client_state *ics)
 {
+	if (s->global_state.active_client_index == ics->server_thread_index && !client_is_overlay(ics) &&
+	    ics->client_state.presentation_hidden) {
+		s->global_state.default_app_hidden = true;
+		s->global_state.active_client_index = -1;
+	}
 	if (s->global_state.active_client_index == ics->server_thread_index && client_is_overlay(ics)) {
 		uint32_t id = s->global_state.previous_default_client_id;
 		volatile struct ipc_client_state *previous = id != 0 ? find_client_locked(s, id) : NULL;
-		s->global_state.active_client_index = previous != NULL ? previous->server_thread_index : -1;
+		s->global_state.active_client_index =
+		    previous != NULL && !client_is_overlay(previous) && !previous->client_state.presentation_hidden
+		        ? previous->server_thread_index
+		        : -1;
 	}
 	// Presentation changes need a flush even when the default app stays the same.
 	s->global_state.last_active_client_index = -1;
 	update_server_state_locked(s);
+}
+
+xrt_result_t
+ipc_server_set_background_visible(struct ipc_server *s, bool visible)
+{
+	os_mutex_lock(&s->global_state.lock);
+	s->global_state.background_suppressed = !visible;
+	flush_state_to_all_clients_locked(s);
+	os_mutex_unlock(&s->global_state.lock);
+	return XRT_SUCCESS;
 }
 
 xrt_result_t

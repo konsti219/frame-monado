@@ -232,6 +232,14 @@ find_active_blend_mode(struct multi_compositor **overlay_sorted_clients, size_t 
 	if (overlay_sorted_clients == NULL)
 		return XRT_BLEND_MODE_OPAQUE;
 
+	bool has_background = false;
+	for (size_t k = 0; k < size; ++k) {
+		const struct multi_compositor *mc = overlay_sorted_clients[k];
+		has_background |= mc->state.visible && mc->state.z_order == INT64_MIN;
+	}
+	if (!has_background)
+		return XRT_BLEND_MODE_ALPHA_BLEND;
+
 	enum xrt_blend_mode chosen_mode = 0;
 	for (size_t k = 0; k < size; ++k) {
 		const struct multi_compositor *mc = overlay_sorted_clients[k];

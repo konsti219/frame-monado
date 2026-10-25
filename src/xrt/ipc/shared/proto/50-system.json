@@ -36,6 +36,10 @@
 		]
 	},
 
+	"system_set_background_visible": {
+		"in": [{"name": "visible", "type": "bool"}]
+	},
+
 	"system_set_input_capture": {
 		"in": [{"name": "capture", "type": "struct ipc_input_capture"}]
 	},
