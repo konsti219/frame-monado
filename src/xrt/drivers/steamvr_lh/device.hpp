@@ -240,8 +240,9 @@ private:
 	float brightness{1.0f};
 	AnalogGainRange analog_gain_range{};
 
-	//! Panel backlight and battery in sysfs (STEAMVR_LH_BACKLIGHT, STEAMVR_LH_BATTERY), for headsets whose
-	//! driver doesn't take brightness through settings or report its battery (the Steam Frame).
+	//! Panel backlight in sysfs (STEAMVR_LH_BACKLIGHT) and the battery from Valve's charger service directory
+	//! (STEAMVR_LH_BATTERY, /run/deckardcharger), for headsets whose driver doesn't take brightness through
+	//! settings or report its battery (the Steam Frame).
 	std::string backlight_path;
 	std::string battery_path;
 };

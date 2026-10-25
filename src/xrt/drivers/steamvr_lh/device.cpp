@@ -1016,17 +1016,25 @@ read_sysfs_number(const std::string &path)
 xrt_result_t
 HmdDevice::get_battery_status(bool *out_present, bool *out_charging, float *out_charge)
 {
-	long capacity = read_sysfs_number(battery_path + "/capacity");
-	char status[32] = {};
-	if (FILE *file = fopen((battery_path + "/status").c_str(), "r"); file != nullptr) {
-		if (fgets(status, sizeof(status), file) == nullptr) {
-			status[0] = '\0';
+	// Valve's charger service: the percentage SteamVR shows (the fuel gauge's raw capacity reads a few points lower)
+	float percent = -1.0f;
+	if (FILE *file = fopen((battery_path + "/battery_percent").c_str(), "r"); file != nullptr) {
+		if (fscanf(file, "%f", &percent) != 1) {
+			percent = -1.0f;
 		}
 		fclose(file);
 	}
-	*out_present = capacity >= 0;
-	*out_charging = std::strncmp(status, "Charging", 8) == 0 || std::strncmp(status, "Full", 4) == 0;
-	*out_charge = capacity >= 0 ? std::clamp(capacity / 100.0f, 0.0f, 1.0f) : 0.0f;
+	char ac[32] = {};
+	if (FILE *file = fopen((battery_path + "/ac_status").c_str(), "r"); file != nullptr) {
+		if (fgets(ac, sizeof(ac), file) == nullptr) {
+			ac[0] = '\0';
+		}
+		fclose(file);
+	}
+	*out_present = percent >= 0.0f;
+	// On the charger, as the frame shell's battery menu shows it
+	*out_charging = std::strncmp(ac, "Connected", 9) == 0;
+	*out_charge = percent >= 0.0f ? std::clamp(percent / 100.0f, 0.0f, 1.0f) : 0.0f;
 	return XRT_SUCCESS;
 }
 
