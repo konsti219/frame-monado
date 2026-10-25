@@ -437,6 +437,14 @@ mnd_root_set_input_capture(mnd_root_t *root,
 }
 
 mnd_result_t
+mnd_root_set_background_visible(mnd_root_t *root, bool visible)
+{
+	CHECK_NOT_NULL(root);
+	xrt_result_t r = ipc_call_system_set_background_visible(&root->ipc_c, visible);
+	return r == XRT_SUCCESS ? MND_SUCCESS : MND_ERROR_OPERATION_FAILED;
+}
+
+mnd_result_t
 mnd_root_set_client_presentation(mnd_root_t *root, uint32_t client_id, uint32_t mode, bool visible)
 {
 	CHECK_NOT_NULL(root);

@@ -471,6 +471,8 @@ struct ipc_server
 		int active_client_index;
 		int last_active_client_index;
 		uint32_t previous_default_client_id;
+		bool default_app_hidden;
+		bool background_suppressed;
 
 		// Counter for total number of connected clients
 		uint32_t connected_client_count;
@@ -526,6 +528,9 @@ ipc_server_get_client_app_state(struct ipc_server *s, uint32_t client_id, struct
  */
 xrt_result_t
 ipc_server_set_active_client(struct ipc_server *s, uint32_t client_id);
+
+xrt_result_t
+ipc_server_set_background_visible(struct ipc_server *s, bool visible);
 
 xrt_result_t
 ipc_server_set_client_presentation(struct ipc_server *s, uint32_t client_id, uint32_t mode, bool visible);

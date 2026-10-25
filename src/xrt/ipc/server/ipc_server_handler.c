@@ -1582,6 +1582,12 @@ ipc_handle_system_set_primary_client(volatile struct ipc_client_state *_ics, uin
 }
 
 xrt_result_t
+ipc_handle_system_set_background_visible(volatile struct ipc_client_state *ics, bool visible)
+{
+	return ipc_server_set_background_visible(ics->server, visible);
+}
+
+xrt_result_t
 ipc_handle_system_set_client_presentation(volatile struct ipc_client_state *ics,
                                         uint32_t client_id, uint32_t mode, bool visible)
 {

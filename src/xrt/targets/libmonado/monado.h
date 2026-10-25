@@ -26,7 +26,7 @@ extern "C" {
 //! Major version of the API.
 #define MND_API_VERSION_MAJOR 1
 //! Minor version of the API.
-#define MND_API_VERSION_MINOR 11
+#define MND_API_VERSION_MINOR 12
 //! Patch version of the API.
 #define MND_API_VERSION_PATCH 0
 
@@ -370,6 +370,9 @@ mnd_root_set_input_capture(mnd_root_t *root, const char *left_profile, const cha
 //! Presentation mode: 0 automatic, 1 default app, 2 overlay; visible applies to overlays.
 mnd_result_t
 mnd_root_set_client_presentation(mnd_root_t *root, uint32_t client_id, uint32_t mode, bool visible);
+
+mnd_result_t
+mnd_root_set_background_visible(mnd_root_t *root, bool visible);
 
 /*!
  * Set the client at the given index as "focused".

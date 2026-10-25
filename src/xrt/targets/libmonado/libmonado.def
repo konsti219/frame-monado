@@ -9,6 +9,7 @@ EXPORTS
     mnd_root_get_client_pid
     mnd_root_get_client_state
     mnd_root_set_input_capture
+    mnd_root_set_background_visible
     mnd_root_set_client_presentation
     mnd_root_set_client_primary
     mnd_root_set_client_focused
