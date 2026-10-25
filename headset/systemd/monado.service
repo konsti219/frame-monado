@@ -20,7 +20,7 @@ Environment=XRT_COMPOSITOR_SCALE_PERCENTAGE=100
 # less at idle; Turnip's autotune picks tile memory for it
 Environment=TU_DEBUG=sysmem
 # Headset backlight and battery straight from sysfs instead of through driver_cv
-Environment=STEAMVR_LH_BACKLIGHT=/sys/class/backlight/ae94000.dsi.0 STEAMVR_LH_BATTERY=/sys/class/power_supply/max1720x_bat_7-36
+Environment=STEAMVR_LH_BACKLIGHT=/sys/class/backlight/ae94000.dsi.0 STEAMVR_LH_BATTERY=/run/deckardcharger
 # Present to photons: the panel's 10.7 ms vsync-to-photons from driver_cv's device config. That holds only while
 # frames don't queue: Mesa's VK_KHR_display WSI commits a frame after the previous one flipped, so one late frame
 # leaves every later one a refresh behind. Like SteamVR's compositor (which commits just in time itself), wait for
