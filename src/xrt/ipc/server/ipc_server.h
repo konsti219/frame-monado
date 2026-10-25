@@ -471,6 +471,8 @@ struct ipc_server
 		int active_client_index;
 		int last_active_client_index;
 		uint32_t previous_default_client_id;
+		//! The default app the shell hid; no other app falls back in while its session lives.
+		uint32_t hidden_default_client_id;
 
 		// Counter for total number of connected clients
 		uint32_t connected_client_count;
