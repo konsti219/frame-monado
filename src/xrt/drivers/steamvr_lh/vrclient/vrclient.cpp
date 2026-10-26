@@ -95,7 +95,7 @@ poll_next_event(void *self, void *event, uint32_t size)
 	const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 	const int due = t >= 15 ? 3 : t >= 5 ? 2 : 1;
 	int n = sent.load();
-	if (getenv("SF_ROOMVIEW_EVENT_OFF") != nullptr || n >= due || !sent.compare_exchange_strong(n, n + 1) ||
+	if (n >= due || !sent.compare_exchange_strong(n, n + 1) ||
 	    event == nullptr || size < 12) {
 		return false;
 	}
@@ -347,7 +347,7 @@ public:
 		if (std::strcmp(version, "IVRIPCResourceManagerClient_002") == 0) {
 			return &ipc_resources;
 		}
-		if (std::strcmp(version, "IVRCameraPassthroughInternal_001") == 0 && getenv("SF_PASSTHROUGH_OFF") == nullptr) {
+		if (std::strcmp(version, "IVRCameraPassthroughInternal_001") == 0) {
 			if (void *pt = camera_passthrough_interface()) {
 				return pt;
 			}
