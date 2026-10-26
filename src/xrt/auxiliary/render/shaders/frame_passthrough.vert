@@ -13,7 +13,7 @@ layout(push_constant) uniform Camera {
     vec4 translation;    // eye origin in the camera frame, w: 1 / fallback depth (0: at infinity)
     vec4 mesh_rotation[3]; // camera to mesh frame; w: focal length, centre x, centre y in grid cells
     vec4 mesh_translation; // camera origin in the mesh frame, w: 1 when a mesh is available
-    vec4 mesh_grid;      // grid width, height, iterations, debug tint
+    vec4 mesh_grid;      // grid width, height, iterations
 } camera;
 layout(location = 0) out vec2 sample_uv;
 layout(location = 1) out vec2 flags; // x: in front of the camera, y: from the mesh

@@ -31,10 +31,5 @@ sf_comp_passthrough_draw(struct sf_comp_passthrough *pt,
                          const struct xrt_pose *eye_pose,
                          const struct xrt_pose *world_pose);
 void
-sf_comp_passthrough_finish(struct sf_comp_passthrough *pt);
-void
 sf_comp_passthrough_destroy(struct sf_comp_passthrough **pt);
 
-void
-sf_comp_passthrough_trace(struct sf_comp_passthrough *pt, const struct comp_render_dispatch_data *d,
-                          const struct comp_layer *layers, uint32_t layer_count);

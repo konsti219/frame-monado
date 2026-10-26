@@ -27,16 +27,6 @@
 namespace {
 
 #define LOG(...) passthrough_log(__VA_ARGS__)
-// Call counts per method and first argument, logged every 10 s, for following XRService's polling
-void count_call(const char *name, long arg);
-#define CALLED(fmt, ...) count_call(__func__, called_arg(0, ##__VA_ARGS__))
-template <typename... Args>
-long
-called_arg(int, Args... args)
-{
-	long first[] = {long(args)..., -1};
-	return first[0];
-}
 
 enum Error
 {
@@ -194,7 +184,6 @@ public:
 	virtual int
 	CameraHasReader(int type, bool *has_reader)
 	{
-		CALLED("type %d", type);
 		if (!initialized(type)) {
 			return NOT_INITIALIZED;
 		}
@@ -208,7 +197,6 @@ public:
 	virtual int
 	GetCameraFrameStates(int type, uint32_t cam, uint32_t *states, uint32_t size)
 	{
-		CALLED("type %d cam %u", type, cam);
 		if (!initialized(type)) {
 			return NOT_INITIALIZED;
 		}
@@ -225,7 +213,6 @@ public:
 	virtual int
 	SubmitCameraFrame(int type, uint32_t cam, uint32_t index)
 	{
-		CALLED("type %d cam %u index %u", type, cam, index);
 		if (!initialized(type)) {
 			return NOT_INITIALIZED;
 		}
@@ -248,14 +235,12 @@ public:
 		f.submit_ns = now_ns();
 		f.submit_seq = __atomic_add_fetch(&t.latest_seq, 1, __ATOMIC_ACQ_REL);
 		__atomic_store_n(&f.state, SF_PT_FRAME_LATEST, __ATOMIC_RELEASE);
-		log_rate(type, cam);
 		return OK;
 	}
 
 	virtual int
 	SetCameraFrameMetadata(int type, uint32_t cam, uint32_t index, const void *metadata)
 	{
-		CALLED("type %d cam %u", type, cam);
 		if (!initialized(type)) {
 			return NOT_INITIALIZED;
 		}
@@ -287,7 +272,6 @@ public:
 	virtual int
 	IsPassthroughActive(bool *active)
 	{
-		CALLED("");
 		if (active != nullptr) {
 			*active = __atomic_load_n(&shm->active, __ATOMIC_ACQUIRE) != 0;
 		}
@@ -303,7 +287,6 @@ public:
 	virtual bool
 	GetPassthroughSettings(uint8_t *settings)
 	{
-		CALLED("");
 		if (settings != nullptr) {
 			memcpy(settings, this->settings, sizeof(this->settings));
 		}
@@ -323,21 +306,18 @@ public:
 	virtual bool
 	GetFlag()
 	{
-		CALLED("");
 		return flag;
 	}
 
 	virtual void
 	SetFlag(bool value)
 	{
-		CALLED("%d", value);
 		flag = value;
 	}
 
 	virtual int
 	GetCounter(uint32_t *out)
 	{
-		CALLED("");
 		if (out == nullptr) {
 			return INVALID_ARGUMENT;
 		}
@@ -349,7 +329,6 @@ public:
 	virtual void
 	Poll()
 	{
-		CALLED("");
 	}
 
 	virtual uint64_t
@@ -366,7 +345,6 @@ public:
 	virtual void
 	GetTiming(double *time, uint64_t *count, void *entries, size_t size)
 	{
-		CALLED("");
 		if (time != nullptr) {
 			*time = 0.0;
 		}
@@ -649,51 +627,9 @@ private:
 			    c.map[(m.height / 2 * m.width + m.width / 2) * 2], c.map[(m.height / 2 * m.width + m.width / 2) * 2 + 1]);
 		}
 	}
-
-	void
-	log_rate(int type, uint32_t cam)
-	{
-		static uint64_t counts[SF_PT_TYPE_COUNT][SF_PT_CAMERA_COUNT], since[SF_PT_TYPE_COUNT][SF_PT_CAMERA_COUNT];
-		uint64_t now = now_ns();
-		counts[type][cam]++;
-		if (since[type][cam] == 0) {
-			since[type][cam] = now;
-		} else if (now - since[type][cam] > 10000000000ull) {
-			LOG("[passthrough] type %d cam %u: %.1f fps\n", type, cam,
-			    counts[type][cam] * 1e9 / double(now - since[type][cam]));
-			counts[type][cam] = 0;
-			since[type][cam] = now;
-		}
-	}
 };
 
 CameraPassthrough *instance;
-
-void
-count_call(const char *name, long arg)
-{
-	static std::mutex mut;
-	static std::vector<std::pair<std::string, uint64_t>> counts;
-	static uint64_t since = now_ns();
-	std::lock_guard lk(mut);
-	std::string key = std::string(name) + "(" + std::to_string(arg) + ")";
-	auto it = std::find_if(counts.begin(), counts.end(), [&](auto &c) { return c.first == key; });
-	if (it == counts.end()) {
-		LOG("[passthrough] first call %s\n", key.c_str());
-		counts.emplace_back(key, 1);
-	} else {
-		it->second++;
-	}
-	if (now_ns() - since > 10000000000ull) {
-		std::string line;
-		for (auto &c : counts) {
-			line += " " + c.first + "=" + std::to_string(c.second);
-			c.second = 0;
-		}
-		LOG("[passthrough] calls in 10 s:%s\n", line.c_str());
-		since = now_ns();
-	}
-}
 
 } // namespace
 

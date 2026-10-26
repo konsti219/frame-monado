@@ -10,7 +10,7 @@ layout(push_constant) uniform Camera {
     vec4 translation;
     vec4 mesh_rotation[3];
     vec4 mesh_translation;
-    vec4 mesh_grid;      // w: debug tint for what came from the room mesh
+    vec4 mesh_grid;      // grid width, height, iterations (see the vertex shader)
 } camera;
 layout(location = 0) in vec2 sample_uv;
 layout(location = 1) in vec2 flags;
@@ -26,5 +26,4 @@ void main()
                          y + 2.017232 * c.x), 0.0, 1.0);
     color = vec4(mix(rgb / 12.92, pow((rgb + 0.055) / 1.055, vec3(2.4)),
                      greaterThan(rgb, vec3(0.04045))), 1.0);
-    if (flags.y > 0.5 && camera.mesh_grid.w > 0.0) color.rb *= 0.5;
 }

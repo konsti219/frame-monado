@@ -33,9 +33,7 @@ public:
 			}
 		}
 		// SteamVR supplies this at runtime: 0/1 override XRService's color mode, 2 preserves it.
-		if (getenv("SF_PASSTHROUGH_OFF") == nullptr) {
-			SetInt32("camera", "roomView", 2, nullptr);
-		}
+		SetInt32("camera", "roomView", 2, nullptr);
 	}
 
 	~ClientSettings()

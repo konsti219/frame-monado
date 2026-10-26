@@ -381,7 +381,7 @@ Context::setup_hmd(const char *serial, vr::ITrackedDeviceServerDriver *driver)
 
 	hmd_parts->base.blend_modes[0] = XRT_BLEND_MODE_OPAQUE;
 	hmd_parts->base.blend_mode_count = 1;
-	if (const char *driver = getenv("STEAMVR_LH_DRIVER"); driver && !strcmp(driver, "cv") && !getenv("SF_PASSTHROUGH_OFF")) {
+	if (const char *driver = getenv("STEAMVR_LH_DRIVER"); driver && !strcmp(driver, "cv")) {
 		hmd_parts->base.blend_modes[1] = XRT_BLEND_MODE_ALPHA_BLEND;
 		hmd_parts->base.blend_mode_count = 2;
 	}

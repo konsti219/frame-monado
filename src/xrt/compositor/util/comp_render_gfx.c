@@ -1710,10 +1710,6 @@ comp_render_gfx_dispatch(struct render_gfx *render,
 			    transition_to);     //
 		}
 
-		if (!d->mirror) {
-			sf_comp_passthrough_trace(d->passthrough, d, layers, layer_count);
-		}
-
 		/*
 		 * Distortion.
 		 */

@@ -122,6 +122,7 @@ enum comp_target_fov_source
 struct comp_renderer
 {
 	struct sf_comp_passthrough *passthrough;
+	bool passthrough_tried;
 	//! @name Durable members
 	//! @brief These don't require the images to be created and don't depend on it.
 	//! @{
@@ -1015,6 +1016,7 @@ renderer_fini(struct comp_renderer *r)
 
 	// Command buffers
 	renderer_close_renderings_and_fences(r);
+	comp_render_gfx_forget_image(vk, VK_NULL_HANDLE);
 
 	// Do before layer render just in case it holds any references.
 	sf_comp_mirror_destroy(&r->mirror);
@@ -1223,12 +1225,14 @@ comp_renderer_draw(struct comp_renderer *r)
 	const uint32_t view_count = c->nr.view_count;
 	enum comp_target_fov_source fov_source = COMP_TARGET_FOV_SOURCE_DISTORTION;
 
-	if (!r->passthrough && !r->settings->use_compute) r->passthrough = sf_comp_passthrough_create(&c->base.vk);
-	const char *force_pt = getenv("SF_PASSTHROUGH");
+	if (!r->passthrough_tried && !r->settings->use_compute) {
+		r->passthrough = sf_comp_passthrough_create(&c->base.vk);
+		r->passthrough_tried = true;
+	}
 	// An opaque projection layer (a PC VR stream without alpha) hides the cameras: stop them meanwhile
 	bool draw_passthrough = c->base.layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND ||
-	                        (force_pt && !strcmp(force_pt, "1") &&
-	                         (frame_settings()->passthrough_behind_opaque || !has_opaque_projection(&c->base.layer_accum)));
+	                        frame_settings()->passthrough_behind_opaque ||
+	                        !has_opaque_projection(&c->base.layer_accum);
 	// The floor estimate needs the cameras too, also while passthrough is hidden
 	bool cameras = sf_comp_passthrough_request(
 	    r->passthrough, draw_passthrough || sf_comp_passthrough_floor_wanted(r->passthrough));
@@ -1351,7 +1355,6 @@ comp_renderer_draw(struct comp_renderer *r)
 	 * This is done after a swap so isn't time critical.
 	 */
 	renderer_wait_queue_idle(r);
-	sf_comp_passthrough_finish(r->passthrough);
 
 	// Check timestamps.
 	if (xret == XRT_SUCCESS) {
