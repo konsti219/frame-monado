@@ -740,7 +740,11 @@ Context::SetDisplayEyeToHead(uint32_t unWhichDevice,
                              const vr::HmdMatrix34_t &eyeToHeadLeft,
                              const vr::HmdMatrix34_t &eyeToHeadRight)
 {
-	hmd->SetDisplayEyeToHead(unWhichDevice, eyeToHeadLeft, eyeToHeadRight);
+	// The driver keeps calling until its Cleanup, after the HMD was destroyed at shutdown
+	std::lock_guard lk(this->devices_mut);
+	if (hmd != nullptr) {
+		hmd->SetDisplayEyeToHead(unWhichDevice, eyeToHeadLeft, eyeToHeadRight);
+	}
 }
 
 void

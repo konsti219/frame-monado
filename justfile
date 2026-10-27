@@ -97,8 +97,15 @@ deploy:
         printf '%s\n' "$report" >&2
         exit 1
     fi
-    monado_active=false
-    if systemctl --user is-active --quiet monado.service; then monado_active=true; fi
+    # Units first, so the fallback already knows the marker below
+    install -m644 "$HOME/sf/frame-monado/systemd/monado.service" "$HOME/sf/frame-monado/systemd/monado-session.target" "$HOME/sf/frame-monado/systemd/monado-session-fallback.service" "$HOME/.config/systemd/user/"
+    install -Dm644 -t "$HOME/.config/systemd/user/monado-session-fallback.service.d" "$HOME/sf/frame-monado/systemd/not-on-purpose.conf"
+    systemctl --user daemon-reload
+    # Started again only in Monado's own session, never inside SteamVR's
+    restart=false
+    if systemctl --user is-active --quiet monado.service && systemctl --user is-active --quiet monado-session.target; then
+        restart=true
+    fi
     touch "$XDG_RUNTIME_DIR/monado-stopped-on-purpose"
     trap 'rm -f "$XDG_RUNTIME_DIR/monado-stopped-on-purpose"' EXIT
     systemctl --user stop monado.service 2>/dev/null || true
@@ -106,14 +113,10 @@ deploy:
     cp -a "$stage/." "$HOME/.local/opt/monado/"
     # Diagnostics that moved out of this repository
     rm -f ~/sf/frame-monado/{capture-trace.sh,fliprate.sh,gpustat.sh,latency.py,meshpeek.py,queue_depth.py}
-    install -m644 "$HOME/sf/frame-monado/systemd/monado.service" "$HOME/sf/frame-monado/systemd/monado-session.target" "$HOME/sf/frame-monado/systemd/monado-session-fallback.service" "$HOME/.config/systemd/user/"
-    install -Dm644 -t "$HOME/.config/systemd/user/monado-session-fallback.service.d" "$HOME/sf/frame-monado/systemd/not-on-purpose.conf"
-    rm -f "$HOME/sf/frame-monado/frame-sleep" "$HOME/sf/frame-monado/systemd/not-while-sleeping.conf"
     if [ -d "$HOME/sf/rt/bin/linuxarm64" ]; then
         install -m755 "$HOME/.local/opt/monado/lib/monado/vrclient.so" "$HOME/sf/rt/bin/linuxarm64/vrclient.so"
     else
         "$HOME/sf/frame-monado/setup-rt.sh"
     fi
-    systemctl --user daemon-reload
-    if "$monado_active"; then systemctl --user start monado.service; fi
+    if "$restart"; then systemctl --user start monado.service; fi
     EOF
