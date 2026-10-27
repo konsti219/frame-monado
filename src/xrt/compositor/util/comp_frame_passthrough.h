@@ -13,7 +13,7 @@ struct sf_comp_passthrough *
 sf_comp_passthrough_create(struct vk_bundle *vk);
 bool
 sf_comp_passthrough_request(struct sf_comp_passthrough *pt, bool wanted);
-// Whether the frame shell needs floor estimates (calibrating), which come from the cameras' room mesh
+// Whether a client wants floor estimates ($XDG_RUNTIME_DIR/monado-floor-wanted), which come from the cameras' room mesh
 bool
 sf_comp_passthrough_floor_wanted(struct sf_comp_passthrough *pt);
 // Feeds the floor estimate while the cameras run without passthrough drawn
