@@ -34,8 +34,10 @@ WorkingDirectory=%h/sf/rt
 ExecStartPre=/bin/rm -f %t/monado_comp_ipc
 # After a switch from game mode, SteamVR's vrserver keeps the controllers' radio dongle for a few more seconds
 # (CRoyDongle::Stop comes ~4 s after the session ends); driver_cv starting on it meanwhile leaves the controllers
-# connected but without any data. Wait for vrserver to exit, at most 20 s.
-ExecStartPre=/bin/sh -c 'for i in $(seq 100); do pgrep -x vrserver >/dev/null || exit 0; sleep 0.2; done; exit 0'
+# connected but without any data. vrcompositor can outlive vrserver, still powering the panel's DSI link down:
+# Monado bringing it up meanwhile leaves its clocks stuck and the panel black until a reboot. So wait for all of
+# SteamVR to exit, at most 20 s.
+ExecStartPre=/bin/sh -c 'for i in $$(seq 100); do case "$$(systemctl --user is-active steamvr.service)" in active|activating|deactivating|reloading) ;; *) pgrep -x "vrserver|vrcompositor" >/dev/null || exit 0 ;; esac; sleep 0.2; done; exit 0'
 # Block queues from an earlier run: XRService would connect to these stale files at startup, and when the
 # controllers turn on later their driver creates fresh queues under the same names, leaving XRService on the
 # orphaned memory (no controller poses, only haptics). Without them XRService retries until the queues exist.
