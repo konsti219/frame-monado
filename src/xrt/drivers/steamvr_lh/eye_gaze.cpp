@@ -63,8 +63,8 @@ read(const uint8_t *base, size_t offset)
 	return value;
 }
 
-//! Gaze correction the frame shell fits from pointer clicks (the user looks at what they click), from
-//! ~/.config/frame-shell/eye-calibration ("key value" lines): corrected = (measured - offset) / gain per axis, angles in
+//! Gaze correction a client fits (the frame shell, from pointer clicks: the user looks at what they click), from
+//! ~/.config/monado/eye-calibration ("key value" lines): corrected = (measured - offset) / gain per axis, angles in
 //! degrees (yaw positive right, pitch positive up)
 struct Correction
 {
@@ -85,9 +85,9 @@ read_correction()
 	const char *config = getenv("XDG_CONFIG_HOME");
 	const char *home = getenv("HOME");
 	if (config != nullptr && *config != '\0') {
-		snprintf(path, sizeof(path), "%s/frame-shell/eye-calibration", config);
+		snprintf(path, sizeof(path), "%s/monado/eye-calibration", config);
 	} else if (home != nullptr) {
-		snprintf(path, sizeof(path), "%s/.config/frame-shell/eye-calibration", home);
+		snprintf(path, sizeof(path), "%s/.config/monado/eye-calibration", home);
 	} else {
 		return correction;
 	}

@@ -5,4 +5,5 @@ Requires=graphical-session.target
 BindsTo=graphical-session.target
 After=graphical-session.target
 PropagatesStopTo=graphical-session.target
-Wants=monado.service monado-wivrn.service monado-wayvr.service frame-shell.service
+# Programs on Monado (the frame shell) add themselves with WantedBy=monado.service
+Wants=monado.service

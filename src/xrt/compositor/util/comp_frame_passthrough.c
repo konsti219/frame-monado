@@ -95,7 +95,7 @@ struct sf_comp_passthrough
 	// Stream chosen for the next frame and the one the textures currently hold (SF_PT_TYPE_*)
 	int type, shown;
 	uint64_t want_ns;
-	uint64_t floor_poll_ns, floor_wanted_until; // CLOCK_MONOTONIC, from $XDG_RUNTIME_DIR/frame-shell-floor-wanted
+	uint64_t floor_poll_ns, floor_wanted_until; // CLOCK_MONOTONIC, from $XDG_RUNTIME_DIR/monado-floor-wanted
 	PFN_vkGetMemoryFdPropertiesKHR get_fd_properties;
 	int pid;
 	uint32_t generation;
@@ -335,7 +335,7 @@ sf_comp_passthrough_floor_wanted(struct sf_comp_passthrough *pt)
 		const char *runtime = getenv("XDG_RUNTIME_DIR");
 		char path[512];
 		FILE *f = NULL;
-		if (runtime && snprintf(path, sizeof(path), "%s/frame-shell-floor-wanted", runtime) < (int)sizeof(path))
+		if (runtime && snprintf(path, sizeof(path), "%s/monado-floor-wanted", runtime) < (int)sizeof(path))
 			f = fopen(path, "r");
 		if (f) {
 			unsigned long long until;
@@ -783,7 +783,7 @@ floor_estimate(struct pt_mesh *m, const float pose[12], double now)
 	float height = best < 0 ? NAN : sum[best] / support[best];
 	char path[512], temporary[520];
 	const char *runtime = getenv("XDG_RUNTIME_DIR");
-	if (!runtime || snprintf(path, sizeof(path), "%s/frame-shell-floor", runtime) >= (int)sizeof(path))
+	if (!runtime || snprintf(path, sizeof(path), "%s/monado-floor", runtime) >= (int)sizeof(path))
 		return;
 	snprintf(temporary, sizeof(temporary), "%s.tmp", path);
 	FILE *file = fopen(temporary, "w");

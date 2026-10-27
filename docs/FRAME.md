@@ -41,7 +41,14 @@ whether or not they set source alpha, as SteamVR does: Unreal games set none.
 
 `headset/` contains SteamOS session integration. `setup-rt.sh` creates the runtime
 layout using the headset's installed SteamVR driver and the deployed Monado shim. SteamOS session/SDDM
-setup remains machine configuration, not a build requirement.
+setup remains machine configuration, not a build requirement. `monado-session.target` starts `monado.service`;
+programs on Monado add themselves with `WantedBy=monado.service` (and `Requires=` it, so they stop and restart with
+it). Monado failing switches back to SteamVR, unless whoever stopped it marks that with
+`$XDG_RUNTIME_DIR/monado-stopped-on-purpose`.
+
+While a client keeps a `CLOCK_MONOTONIC` deadline (ns) in `$XDG_RUNTIME_DIR/monado-floor-wanted`, the cameras run
+without passthrough drawn and the compositor estimates the floor height from their room mesh into
+`$XDG_RUNTIME_DIR/monado-floor` (first line `1 <time ns> <height m> <support>`).
 
 With `driver_cv`, discovery finishes as soon as the HMD has completed activation; the stable controller slots
 accept controllers later. `LH_DISCOVER_WAIT_MS` is the timeout when the HMD is missing, rather than a mandatory
@@ -90,8 +97,7 @@ on the headset, read when the compositor starts (restart `monado.service` after 
 - `passthrough_behind_opaque` (default false): keep the cameras and passthrough running while an opaque
   projection layer (a PC VR stream without alpha) hides them. Off saves ~0.8 W while streaming.
 
-- The GPU clock cap is the frame shell's performance mode (578 MHz for streaming); `monado.service` lifts it when the
-  session ends. 422 saves ~0.3 W in the spin test, but in VRChat with overlays it missed ~3 display frames a minute (vs ~0.3).
+- The GPU clock cap is the frame shell's performance mode (578 MHz for streaming), lifted when the shell stops. 422 saves ~0.3 W in the spin test, but in VRChat with overlays it missed ~3 display frames a minute (vs ~0.3).
 - Projection layers can carry a foveated image (`XR_FRAME_foveated_projection`, chained to the projection view): the
   distortion pass expands it through per-axis lookup tables (`mesh_foveated.frag`), so the frame shell's client
   doesn't expand its stream to the full render size first. Opaque layers on the direct paths only; a squashed one
@@ -108,7 +114,7 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   Monado's `cv` settings layer sets it from this. In a panel-on idle comparison, 72 fps cost about 0.5 W more
   than 15 fps, including the shell's eye expressions; the eye service used ~8% of a core versus ~2%.
 
-The eye gaze is corrected with `~/.config/frame-shell/eye-calibration`, which the frame shell keeps fitting from
+The eye gaze is corrected with `~/.config/monado/eye-calibration`, which the frame shell keeps fitting from
 pointer clicks (the user looks at what they click): `corrected = (measured - offset) / gain` per axis in degrees,
 reread within a second. Valve's eye tracking service only calibrates itself from SteamVR's UI clicks, so without it
 the gaze keeps its generic model (measured about 7° too high and 1.2× too steep vertically). Delete the file to start

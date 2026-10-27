@@ -47,7 +47,7 @@ ExecStartPre=/bin/ln -f %h/.local/opt/monado/bin/monado-service %h/sf/rt/bin/lin
 # SteamVR's display chromatic aberration correction (CAC_BLOB on the CRTC, copied from a SteamVR session at 72 Hz):
 # Monado uses green distortion for all colours; the display corrects colour fringes.
 ExecStartPre=-/bin/sh -c 'sudo -n %h/sf/kmscac/kmscac set "$$(cat %h/sf/frame-monado/cac_blob_72hz.hex)"'
-# Scheduler for the session (frame.stop_sched_ext; docs/FRAME.md) and the GPU clock uncapped after it
+# Scheduler for the session (frame.stop_sched_ext; docs/FRAME.md)
 ExecStartPre=-%h/sf/frame-monado/session-power start
 ExecStopPost=-%h/sf/frame-monado/session-power stop
 # Started from the SteamVR-shaped layout, since driver_cv finds XRService relative to the executable

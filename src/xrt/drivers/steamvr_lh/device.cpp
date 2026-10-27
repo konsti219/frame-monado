@@ -1008,7 +1008,7 @@ HmdDevice::get_battery_status(bool *out_present, bool *out_charging, float *out_
 		fclose(file);
 	}
 	*out_present = percent >= 0.0f;
-	// On the charger, as the frame shell's battery menu shows it
+	// On the charger, whether or not it charges
 	*out_charging = std::strncmp(ac, "Connected", 9) == 0;
 	*out_charge = percent >= 0.0f ? std::clamp(percent / 100.0f, 0.0f, 1.0f) : 0.0f;
 	return XRT_SUCCESS;
