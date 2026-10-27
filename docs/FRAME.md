@@ -77,7 +77,6 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   "frame": {
     "passthrough_scratch_scale": 0.5,
     "passthrough_behind_opaque": false,
-    "gpu_max_mhz": 578,
     "stop_sched_ext": false,
     "mirror": true,
     "mirror_fps": 60,
@@ -91,8 +90,8 @@ on the headset, read when the compositor starts (restart `monado.service` after 
 - `passthrough_behind_opaque` (default false): keep the cameras and passthrough running while an opaque
   projection layer (a PC VR stream without alpha) hides them. Off saves ~0.8 W while streaming.
 
-- `gpu_max_mhz` (default 578): GPU clock cap for the session, applied by `monado.service` (restored afterwards).
-  422 saves ~0.3 W in the spin test, but in VRChat with overlays it missed ~3 display frames a minute (vs ~0.3).
+- The GPU clock cap is the frame shell's performance mode (578 MHz for streaming); `monado.service` lifts it when the
+  session ends. 422 saves ~0.3 W in the spin test, but in VRChat with overlays it missed ~3 display frames a minute (vs ~0.3).
 - Projection layers can carry a foveated image (`XR_FRAME_foveated_projection`, chained to the projection view): the
   distortion pass expands it through per-axis lookup tables (`mesh_foveated.frag`), so the frame shell's client
   doesn't expand its stream to the full render size first. Opaque layers on the direct paths only; a squashed one
