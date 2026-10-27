@@ -70,8 +70,8 @@ struct sf_comp_mirror
 };
 
 /// Corners of the mirror in view 0's uv: an upright 16:9 rectangle around the eye's forward direction in tangent
-/// space, turned by the eye's roll against the head (the Frame's panels sit upside down and canted), as large as
-/// fits inside the view
+/// space, turned by the eye's roll against the head (the Frame's panels sit upside down and canted), zoomed in from
+/// the largest that fits inside the view
 static void
 mirror_corners(const struct xrt_fov *fov, const struct xrt_quat *eye, struct xrt_vec2 out[4])
 {
@@ -87,6 +87,8 @@ mirror_corners(const struct xrt_fov *fov, const struct xrt_quat *eye, struct xrt
 	const float k = (float)MIRROR_WIDTH / (float)MIRROR_HEIGHT;
 	float a = fminf(-l, r), b = fminf(u, -dn);
 	float half_h = fminf(a / (k * fabsf(c) + fabsf(s)), b / (k * fabsf(s) + fabsf(c)));
+	// Clear of the passthrough camera's edge (81% of the view's nasal half) and apps' hidden areas
+	half_h *= 0.75f;
 	float half_w = k * half_h;
 
 	for (int i = 0; i < 4; i++) {

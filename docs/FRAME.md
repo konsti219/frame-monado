@@ -102,7 +102,7 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   a visible jump with motion) against ~0.4% under lavd.
 - `mirror` (default true): the headset view in SteamVR's v4l2loopback device (`/dev/video99`, 1920x1080 RGB3), as
   SteamVR's v4l2cam provides it (FrameMate's mirroring): the left eye without lens distortion, turned upright and cropped to 16:9 around
-  its forward direction, drawn again from the frame's scratch images only while a program streams from the device.
+  its forward direction and zoomed to the middle 75% (clear of the passthrough camera's edge and apps' hidden areas), drawn again from the frame's scratch images only while a program streams from the device.
   `mirror_fps` (default 60) caps its rate; at 90 Hz that's every second frame.
 - `eye_tracking_fps` (15–90, default 36): the eye cameras' rate. `driver_cv` asks Valve's eye service for
   `steamvr/eyeTrackingRateMin` while gaze dependent eye-to-head is off, which `frame_hmd`'s settings make 15 fps;
