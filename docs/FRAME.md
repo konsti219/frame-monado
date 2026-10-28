@@ -114,6 +114,11 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   Monado's `cv` settings layer sets it from this. In a panel-on idle comparison, 72 fps cost about 0.5 W more
   than 15 fps, including the shell's eye expressions; the eye service used ~8% of a core versus ~2%.
 
+SteamVR's eye tracker feeds both eye cameras to one network without flipping either, so the wearer's left eye
+(camera ring 1, mounted upside down) reaches it upside down. `headset/eyetracking-flip-patch.py` patches a copy that
+flips that eye's input and mirrors its outputs back; `monado.service` rebuilds `~/sf/rt/tools` with it
+(`headset/eyetracking-tools`) on every start, and runs SteamVR's binary unpatched when the build is unknown.
+
 The eye gaze is corrected with `~/.config/monado/eye-calibration`, which the frame shell keeps fitting from
 pointer clicks (the user looks at what they click): `corrected = (measured - offset) / gain` per axis in degrees,
 reread within a second. Valve's eye tracking service only calibrates itself from SteamVR's UI clicks, so without it

@@ -51,6 +51,8 @@ ExecStartPre=/bin/ln -f %h/.local/opt/monado/bin/monado-service %h/sf/rt/bin/lin
 ExecStartPre=-/bin/sh -c 'sudo -n %h/sf/kmscac/kmscac set "$$(cat %h/sf/frame-monado/cac_blob_72hz.hex)"'
 # Scheduler for the session (frame.stop_sched_ext; docs/FRAME.md)
 ExecStartPre=-%h/sf/frame-monado/session-power start
+# SteamVR's tools with the patched eyetracking, rebuilt each start so a SteamVR update falls back to it unpatched
+ExecStartPre=-%h/sf/frame-monado/eyetracking-tools
 ExecStopPost=-%h/sf/frame-monado/session-power stop
 # Started from the SteamVR-shaped layout, since driver_cv finds XRService relative to the executable
 ExecStart=%h/sf/rt/bin/linuxarm64/monado-service

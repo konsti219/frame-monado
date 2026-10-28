@@ -6,7 +6,8 @@ shim="$HOME/.local/opt/monado/lib/monado/vrclient.so"
 [ -f "$shim" ] || { echo "Deploy the cross-built Monado runtime first" >&2; exit 1; }
 rm -rf "$runtime"
 mkdir -p "$runtime/bin/linuxarm64" "$runtime/drivers/cv/bin/linuxarm64"
-for d in resources tools; do ln -s "/opt/steamvr/$d" "$runtime/$d"; done
+ln -s /opt/steamvr/resources "$runtime/resources"
+"$HOME/sf/frame-monado/eyetracking-tools"
 for d in /opt/steamvr/drivers/*; do [ "${d##*/}" = cv ] || ln -s "$d" "$runtime/drivers/"; done
 for f in /opt/steamvr/drivers/cv/*; do [ "${f##*/}" = bin ] || ln -s "$f" "$runtime/drivers/cv/"; done
 for f in /opt/steamvr/drivers/cv/bin/linuxarm64/*; do ln -s "$f" "$runtime/drivers/cv/bin/linuxarm64/"; done
