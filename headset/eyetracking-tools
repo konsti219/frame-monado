@@ -1,0 +1,14 @@
+#!/bin/sh
+# SteamVR's tools for the runtime layout, with eyetracking patched so its network sees the left eye upright
+# (eyetracking-flip-patch.py); an unknown SteamVR build runs unpatched.
+set -eu
+tools="$HOME/sf/rt/tools"
+bin=/opt/steamvr/tools/eyetracking/bin/linuxarm64/eyetracking
+rm -rf "$tools"
+mkdir -p "$tools/eyetracking/bin/linuxarm64"
+for d in /opt/steamvr/tools/*; do [ "${d##*/}" = eyetracking ] || ln -s "$d" "$tools/"; done
+for f in /opt/steamvr/tools/eyetracking/*; do [ "${f##*/}" = bin ] || ln -s "$f" "$tools/eyetracking/"; done
+if ! python3 "$HOME/sf/frame-monado/eyetracking-flip-patch.py" "$bin" "$tools/eyetracking/bin/linuxarm64/eyetracking"; then
+	echo "eyetracking: unknown SteamVR build, running it unpatched" >&2
+	ln -sf "$bin" "$tools/eyetracking/bin/linuxarm64/eyetracking"
+fi
