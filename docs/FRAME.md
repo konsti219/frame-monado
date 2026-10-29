@@ -84,7 +84,6 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   "frame": {
     "passthrough_scratch_scale": 0.5,
     "passthrough_behind_opaque": false,
-    "stop_sched_ext": false,
     "mirror": true,
     "mirror_fps": 60,
     "eye_tracking_fps": 36
@@ -96,15 +95,11 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   The cameras resolve about 330 px/rad against about 1100 on the panel; 0.35 is visibly softer.
 - `passthrough_behind_opaque` (default false): keep the cameras and passthrough running while an opaque
   projection layer (a PC VR stream without alpha) hides them. Off saves ~0.8 W while streaming.
-
 - The GPU clock cap is the frame shell's performance mode (578 MHz for streaming), lifted when the shell stops. 422 saves ~0.3 W in the spin test, but in VRChat with overlays it missed ~3 display frames a minute (vs ~0.3).
 - Projection layers can carry a foveated image (`XR_FRAME_foveated_projection`, chained to the projection view): the
   distortion pass expands it through per-axis lookup tables (`mesh_foveated.frag`), so the frame shell's client
   doesn't expand its stream to the full render size first. Opaque layers on the direct paths only; a squashed one
   is shown unexpanded (logged once).
-- `stop_sched_ext` (default false): stop SteamOS's `scx_lavd` scheduler for the session (started again afterwards).
-  Saves ~0.25 W of CPU, but the frame shell's client then delivers ~6% of its frames too late for Monado (reused,
-  a visible jump with motion) against ~0.4% under lavd.
 - `mirror` (default true): the headset view in SteamVR's v4l2loopback device (`/dev/video99`, 1920x1080 RGB3), as
   SteamVR's v4l2cam provides it (FrameMate's mirroring): the left eye without lens distortion, turned upright and cropped to 16:9 around
   its forward direction and zoomed to the middle 75% (clear of the passthrough camera's edge and apps' hidden areas), drawn again from the frame's scratch images only while a program streams from the device.
