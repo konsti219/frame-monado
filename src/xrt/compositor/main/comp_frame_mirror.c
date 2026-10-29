@@ -60,6 +60,10 @@ struct sf_comp_mirror
 	uint64_t interval_ns;
 	uint64_t last_ns;
 
+	// Stabilization: the smoothed orientation the mirror is drawn from
+	struct xrt_quat stable;
+	uint64_t stable_ns;
+
 	// Writer thread: frames from the readback, woken through an eventfd
 	pthread_t thread;
 	int wake;
@@ -71,9 +75,9 @@ struct sf_comp_mirror
 
 /// Corners of the mirror in view 0's uv: an upright 16:9 rectangle around the eye's forward direction in tangent
 /// space, turned by the eye's roll against the head (the Frame's panels sit upside down and canted), zoomed in from
-/// the largest that fits inside the view
+/// the largest that fits inside the view. Also the angle the view may turn before the rectangle leaves it.
 static void
-mirror_corners(const struct xrt_fov *fov, const struct xrt_quat *eye, struct xrt_vec2 out[4])
+mirror_corners(const struct xrt_fov *fov, const struct xrt_quat *eye, struct xrt_vec2 out[4], float *out_margin)
 {
 	float l = tanf(fov->angle_left), r = tanf(fov->angle_right);
 	float u = tanf(fov->angle_up), dn = tanf(fov->angle_down);
@@ -90,6 +94,7 @@ mirror_corners(const struct xrt_fov *fov, const struct xrt_quat *eye, struct xrt
 	// Clear of the passthrough camera's edge (81% of the view's nasal half) and apps' hidden areas
 	half_h *= 0.75f;
 	float half_w = k * half_h;
+	*out_margin = fminf(atanf(a) - atanf(half_w), atanf(b) - atanf(half_h));
 
 	for (int i = 0; i < 4; i++) {
 		float px = (float)(i % 2 ? 1 : -1) * half_w;
@@ -99,6 +104,28 @@ mirror_corners(const struct xrt_fov *fov, const struct xrt_quat *eye, struct xrt
 		float ey = -s * px + c * py;
 		out[i] = (struct xrt_vec2){(ex - l) / (r - l), (u - ey) / (u - dn)};
 	}
+}
+
+// Time constant of the stabilization: removes jitter and small head movement, follows turns closely
+#define MIRROR_STABILIZATION_S 0.1f
+
+/// The orientation the mirror is drawn from: the eye's, low-pass filtered, never further behind than `margin`
+static struct xrt_quat
+mirror_stabilize(struct sf_comp_mirror *m, const struct xrt_quat *actual, uint64_t now_ns, float margin)
+{
+	float dt = (float)((double)((int64_t)(now_ns - m->stable_ns)) * 1e-9);
+	if (m->stable_ns == 0 || dt < 0.0f || dt > 0.5f) {
+		m->stable = *actual;
+	} else {
+		math_quat_slerp(&m->stable, actual, 1.0f - expf(-dt / MIRROR_STABILIZATION_S), &m->stable);
+	}
+	m->stable_ns = now_ns;
+
+	float angle = 2.0f * acosf(fminf(fabsf(math_quat_dot(&m->stable, actual)), 1.0f));
+	if (angle > margin) {
+		math_quat_slerp(&m->stable, actual, 1.0f - margin / angle, &m->stable);
+	}
+	return m->stable;
 }
 
 static void
@@ -302,7 +329,8 @@ sf_comp_mirror_draw(struct sf_comp_mirror *m,
 	struct vk_bundle *vk = &c->base.vk;
 
 	struct xrt_vec2 corners[4];
-	mirror_corners(&d->views[0].fov, &d->views[0].eye_pose.orientation, corners);
+	float margin;
+	mirror_corners(&d->views[0].fov, &d->views[0].eye_pose.orientation, corners, &margin);
 	if (memcmp(corners, m->corners, sizeof(corners)) != 0) {
 		if (!render_resources_set_mirror_mesh(&c->nr, corners)) {
 			return;
@@ -319,6 +347,12 @@ sf_comp_mirror_draw(struct sf_comp_mirror *m,
 	md.views[0].target.viewport_data = full;
 	md.views[0].target.scissor_data = full;
 	md.views[0].target.gfx.vertex_rot = (struct xrt_matrix_2x2){.v = {1, 0, 0, 1}};
+	// Stabilized: drawn from a smoothed orientation; the scratch image is reprojected from the pose it was drawn for
+	md.mirror_scratch_pose = d->views[0].world_pose_scanout_begin;
+	struct xrt_pose pose = d->views[0].world_pose_scanout_begin;
+	pose.orientation = mirror_stabilize(m, &pose.orientation, predicted_display_time_ns, 0.9f * margin);
+	md.views[0].world_pose_scanout_begin = pose;
+	md.views[0].world_pose_scanout_end = pose;
 
 	struct render_gfx render;
 	render_gfx_init(&render, &c->nr);

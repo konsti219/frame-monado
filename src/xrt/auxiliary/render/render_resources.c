@@ -1344,43 +1344,75 @@ render_resources_set_mirror_mesh(struct render_resources *r, const struct xrt_ve
 	const uint32_t floats = r->mesh.stride / sizeof(float);
 	VkResult ret;
 
-	// One cell in the layout of the distortion mesh (position, then r, g and b uv), so the same pipelines draw it
-	float corners[4][8];
-	for (uint32_t i = 0; i < 4; i++) {
-		float u = (float)(i % 2), v = (float)(i / 2);
-		float su = uv[i].x, sv = uv[i].y;
-		float vertex[8] = {u * 2.0f - 1.0f, v * 2.0f - 1.0f, su, sv, su, sv, su, sv};
-		memcpy(corners[i], vertex, sizeof(vertex));
+	// A grid in the layout of the distortion mesh (position, then r, g and b uv), so the same pipelines draw it:
+	// timewarp divides per vertex, so one cell would bend a turned (stabilized) view
+	enum { W = 32, H = 18 };
+	float grid[H + 1][W + 1][8];
+	for (uint32_t y = 0; y <= H; y++) {
+		for (uint32_t x = 0; x <= W; x++) {
+			float u = (float)x / W, v = (float)y / H;
+			float su = (1 - v) * ((1 - u) * uv[0].x + u * uv[1].x) + v * ((1 - u) * uv[2].x + u * uv[3].x);
+			float sv = (1 - v) * ((1 - u) * uv[0].y + u * uv[1].y) + v * ((1 - u) * uv[2].y + u * uv[3].y);
+			float vertex[8] = {u * 2.0f - 1.0f, v * 2.0f - 1.0f, su, sv, su, sv, su, sv};
+			memcpy(grid[y][x], vertex, sizeof(vertex));
+		}
 	}
-	// Indexed meshes are triangle strips, others triangle lists
-	const uint32_t list[6] = {0, 2, 1, 1, 2, 3};
-	const int strip[6] = {0, 0, 2, 1, 3, 3};
-	const bool indexed = r->mesh.index_count_total > 0;
-	const uint32_t vertex_count = indexed ? 4 : 6;
 
-	float *vertices = U_TYPED_ARRAY_CALLOC(float, floats * 6);
-	for (uint32_t i = 0; i < vertex_count; i++) {
-		memcpy(&vertices[i * floats], corners[indexed ? i : list[i]], sizeof(corners[0]));
+	// Indexed meshes are triangle strips (rows joined by degenerate triangles), others triangle lists
+	const bool indexed = r->mesh.index_count_total > 0;
+	const uint32_t max_vertices = W * H * 6;
+	const uint32_t max_indices = H * 2 * (W + 1) + 2 * H;
+	float *vertices = U_TYPED_ARRAY_CALLOC(float, floats * max_vertices);
+	uint32_t *indices = U_TYPED_ARRAY_CALLOC(uint32_t, max_indices);
+	uint32_t vertex_count = 0, index_count = 0;
+	if (indexed) {
+		for (uint32_t y = 0; y <= H; y++) {
+			for (uint32_t x = 0; x <= W; x++) {
+				memcpy(&vertices[vertex_count++ * floats], grid[y][x], sizeof(grid[0][0]));
+			}
+		}
+		for (uint32_t y = 0; y < H; y++) {
+			indices[index_count++] = y * (W + 1);
+			for (uint32_t x = 0; x <= W; x++) {
+				indices[index_count++] = y * (W + 1) + x;
+				indices[index_count++] = (y + 1) * (W + 1) + x;
+			}
+			indices[index_count++] = (y + 1) * (W + 1) + W;
+		}
+	} else {
+		static const uint32_t cell[6][2] = {{0, 0}, {1, 0}, {0, 1}, {0, 1}, {1, 0}, {1, 1}};
+		for (uint32_t y = 0; y < H; y++) {
+			for (uint32_t x = 0; x < W; x++) {
+				for (uint32_t i = 0; i < 6; i++) {
+					memcpy(&vertices[vertex_count++ * floats], grid[y + cell[i][1]][x + cell[i][0]],
+					       sizeof(grid[0][0]));
+				}
+			}
+		}
 	}
 
 	VkMemoryPropertyFlags memory = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+	ret = VK_SUCCESS;
 	if (r->mesh.mirror_vbo.buffer == VK_NULL_HANDLE) {
 		ret = render_buffer_init(vk, &r->mesh.mirror_vbo, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, memory,
-		                         r->mesh.stride * 6);
+		                         r->mesh.stride * max_vertices);
 		if (ret == VK_SUCCESS && indexed) {
 			ret = render_buffer_init(vk, &r->mesh.mirror_ibo, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, memory,
-			                         sizeof(strip));
-			if (ret == VK_SUCCESS) {
-				ret = render_buffer_write(vk, &r->mesh.mirror_ibo, (void *)strip, sizeof(strip));
-			}
-		}
-		if (ret != VK_SUCCESS) {
-			free(vertices);
-			VK_ERROR(vk, "Mirror mesh: %s", vk_result_string(ret));
-			return false;
+			                         sizeof(uint32_t) * max_indices);
 		}
 	}
-	ret = render_buffer_write(vk, &r->mesh.mirror_vbo, vertices, r->mesh.stride * vertex_count);
+	if (ret == VK_SUCCESS) {
+		ret = render_buffer_write(vk, &r->mesh.mirror_vbo, vertices, r->mesh.stride * vertex_count);
+	}
+	if (ret == VK_SUCCESS && indexed) {
+		ret = render_buffer_write(vk, &r->mesh.mirror_ibo, indices, sizeof(uint32_t) * index_count);
+	}
 	free(vertices);
-	return ret == VK_SUCCESS;
+	free(indices);
+	if (ret != VK_SUCCESS) {
+		VK_ERROR(vk, "Mirror mesh: %s", vk_result_string(ret));
+		return false;
+	}
+	r->mesh.mirror_count = indexed ? index_count : vertex_count;
+	return true;
 }

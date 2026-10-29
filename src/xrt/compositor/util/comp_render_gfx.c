@@ -1299,7 +1299,7 @@ crg_distortion_after_squash(struct render_gfx *render,
 
 	struct gfx_mesh_data md = XRT_STRUCT_INIT;
 	for (uint32_t i = 0; i < d->target.view_count; i++) {
-		struct xrt_pose src_pose = d->views[i].world_pose_scanout_begin;
+		struct xrt_pose src_pose = d->mirror ? d->mirror_scratch_pose : d->views[i].world_pose_scanout_begin;
 		struct xrt_fov src_fov = d->views[i].fov;
 		VkImageView src_image_view = d->views[i].squash_as_src.sample_view;
 		struct xrt_normalized_rect src_norm_rect = d->views[i].squash_as_src.norm_rect;

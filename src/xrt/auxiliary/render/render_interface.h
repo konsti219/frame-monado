@@ -464,6 +464,8 @@ struct render_resources
 		//! Flat mesh over part of a view's uv space, without lens distortion (render_resources_set_mirror_mesh).
 		struct render_buffer mirror_vbo;
 		struct render_buffer mirror_ibo;
+		//! Indices (indexed distortion mesh) or vertices it draws.
+		uint32_t mirror_count;
 	} mesh;
 
 	/*!
