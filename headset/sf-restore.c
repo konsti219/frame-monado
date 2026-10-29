@@ -1,6 +1,5 @@
 // Setuid-root helper that restores what SteamOS updates wipe: the passwordless sudo rule and the Monado session
 // file. Fixed contents and paths, no arguments, so it can't be used to write anything else.
-// Build and install on the headset: see README ("After SteamOS updates").
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
