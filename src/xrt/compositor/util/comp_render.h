@@ -194,6 +194,10 @@ struct comp_render_dispatch_data
 	//! this frame: no squash, layers drawn in the distortion pass cover the whole target.
 	bool mirror;
 
+	//! With mirror: the world pose view 0's scratch image was drawn for, so a mirror drawn from another pose (the
+	//! views' world poses) reprojects it.
+	struct xrt_pose mirror_scratch_pose;
+
 	struct
 	{
 		//! Has this struct been setup to use the target.

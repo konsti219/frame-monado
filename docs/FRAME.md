@@ -109,6 +109,8 @@ on the headset, read when the compositor starts (restart `monado.service` after 
   SteamVR's v4l2cam provides it (FrameMate's mirroring): the left eye without lens distortion, turned upright and cropped to 16:9 around
   its forward direction and zoomed to the middle 75% (clear of the passthrough camera's edge and apps' hidden areas), drawn again from the frame's scratch images only while a program streams from the device.
   `mirror_fps` (default 60) caps its rate; at 90 Hz that's every second frame.
+  It's stabilized: drawn from the head orientation low-pass filtered with a 0.1 s time constant, never further behind
+  than the crop's margin (about 8° sideways); head-locked layers stay put in it.
 - `eye_tracking_fps` (15–90, default 36): the eye cameras' rate. `driver_cv` asks Valve's eye service for
   `steamvr/eyeTrackingRateMin` while gaze dependent eye-to-head is off, which `frame_hmd`'s settings make 15 fps;
   Monado's `cv` settings layer sets it from this. In a panel-on idle comparison, 72 fps cost about 0.5 W more

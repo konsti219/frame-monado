@@ -1278,12 +1278,12 @@ mesh_draw_with_pipeline(struct render_gfx *render, uint32_t mesh_index, VkDescri
 	 */
 
 	if (render->mirror_mesh) {
-		// One cell: an indexed strip of 6 or a list of 6 vertices, like the distortion mesh
+		// A grid: an indexed strip or a vertex list, like the distortion mesh
 		if (r->mesh.index_count_total > 0) {
 			vk->vkCmdBindIndexBuffer(r->cmd, r->mesh.mirror_ibo.buffer, 0, VK_INDEX_TYPE_UINT32);
-			vk->vkCmdDrawIndexed(r->cmd, 6, 1, 0, 0, 0);
+			vk->vkCmdDrawIndexed(r->cmd, r->mesh.mirror_count, 1, 0, 0, 0);
 		} else {
-			vk->vkCmdDraw(r->cmd, 6, 1, 0, 0);
+			vk->vkCmdDraw(r->cmd, r->mesh.mirror_count, 1, 0, 0);
 		}
 	} else if (r->mesh.index_count_total > 0) {
 		vk->vkCmdBindIndexBuffer(  //
