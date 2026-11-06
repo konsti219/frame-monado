@@ -264,10 +264,10 @@ logging_stub(const char *name)
 		stub->vtable = logging_stub_vtable(std::make_integer_sequence<int, 96>{});
 		stub->name = strdup(name);
 		if (std::strcmp(name, "IVRServerInternal_XXX") == 0) {
-			// driver_cv puts slot 67's std::string (returned through x8) into JSON every few minutes
+			// driver_cv puts slot 65's std::string (returned through x8) into JSON every 5 minutes
 			void **vtable = new void *[96];
 			std::memcpy(vtable, stub->vtable, 96 * sizeof(void *));
-			vtable[67] = reinterpret_cast<void *>(&empty_string_slot);
+			vtable[65] = reinterpret_cast<void *>(&empty_string_slot);
 			stub->vtable = vtable;
 		}
 	}
