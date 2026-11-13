@@ -42,8 +42,6 @@ ExecStartPre=/bin/sh -c 'for i in $$(seq 100); do case "$$(systemctl --user is-a
 # controllers turn on later their driver creates fresh queues under the same names, leaving XRService on the
 # orphaned memory (no controller poses, only haptics). Without them XRService retries until the queues exist.
 ExecStartPre=/bin/sh -c 'rm -f /dev/shm/sfbq_*'
-# Realtime scheduling for the compositor threads; installs drop the file capability
-ExecStartPre=-/usr/bin/sudo -n /usr/bin/setcap cap_sys_nice+ep %h/.local/opt/monado/bin/monado-service
 # The layout holds a hardlink (not a symlink: /proc/self/exe resolves those), refreshed after reinstalls
 ExecStartPre=/bin/ln -f %h/.local/opt/monado/bin/monado-service %h/.local/share/frame-monado/rt/bin/linuxarm64/monado-service
 # SteamVR's tools with the patched eyetracking, rebuilt each start so a SteamVR update falls back to it unpatched
