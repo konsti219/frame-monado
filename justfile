@@ -5,7 +5,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 root := justfile_directory()
 build_dir := root / "out/headset"
 stage := build_dir / "stage/home/steamos/.local/opt/monado"
-headset := env("FRAME_HEADSET", "steamos@frame")
+headset := env("FRAME_HEADSET", "steamos@frame.local")
 sdk := "podman run --rm -i --userns=keep-id -v " + root + ":/work:Z -w /work localhost/frame-monado-cross bash -euo pipefail -s"
 
 _default:
@@ -82,15 +82,24 @@ build:
     "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug "$stage/lib/android-arm64/libopenxr_monado.so"
     EOF
 
-# Install Monado and the session files, restarting the runtime (and what it pulls in) if it ran; FRAME_HEADSET overrides steamos@frame
+# One-time headset setup: the Monado desktop session (asks for the sudo password)
+setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    headset="{{headset}}"
+    ssh "$headset" 'mkdir -p ~/.local/share/frame-monado'
+    tar -C "{{root}}/headset" -cf - . | ssh "$headset" 'tar -C ~/.local/share/frame-monado -xf -'
+    ssh -t "$headset" '~/.local/share/frame-monado/setup.sh'
+
+# Install Monado and the session files, restarting the runtime (and what it pulls in) if it ran; FRAME_HEADSET overrides steamos@frame.local
 deploy:
     #!/usr/bin/env bash
     set -euo pipefail
     [ -x "{{stage}}/bin/monado-service" ] || { echo "Run just build first" >&2; exit 1; }
     headset="{{headset}}"
-    ssh "$headset" 'mkdir -p ~/.local/state/frame-monado/deploy ~/sf/frame-monado ~/.config/systemd/user'
+    ssh "$headset" 'mkdir -p ~/.local/state/frame-monado/deploy ~/.local/share/frame-monado ~/.config/systemd/user'
     tar -C "{{stage}}" -cf - . | ssh "$headset" 'tar -C ~/.local/state/frame-monado/deploy -xf -'
-    tar -C "{{root}}/headset" --exclude='*.c' -cf - . | ssh "$headset" 'tar -C ~/sf/frame-monado -xf -'
+    tar -C "{{root}}/headset" -cf - . | ssh "$headset" 'tar -C ~/.local/share/frame-monado -xf -'
     ssh "$headset" 'bash -euo pipefail -s' <<'EOF'
     stage="$HOME/.local/state/frame-monado/deploy"
     if report=$(LD_LIBRARY_PATH="$stage/lib" ldd "$stage/bin/monado-service" 2>&1) && [[ "$report" != *"not found"* ]]; then :; else
@@ -98,8 +107,8 @@ deploy:
         exit 1
     fi
     # Units first, so the fallback already knows the marker below
-    install -m644 "$HOME/sf/frame-monado/systemd/monado.service" "$HOME/sf/frame-monado/systemd/monado-session.target" "$HOME/sf/frame-monado/systemd/monado-session-fallback.service" "$HOME/.config/systemd/user/"
-    install -Dm644 -t "$HOME/.config/systemd/user/monado-session-fallback.service.d" "$HOME/sf/frame-monado/systemd/not-on-purpose.conf"
+    install -m644 "$HOME/.local/share/frame-monado/systemd/monado.service" "$HOME/.local/share/frame-monado/systemd/monado-session.target" "$HOME/.local/share/frame-monado/systemd/monado-session-fallback.service" "$HOME/.config/systemd/user/"
+    install -Dm644 -t "$HOME/.config/systemd/user/monado-session-fallback.service.d" "$HOME/.local/share/frame-monado/systemd/not-on-purpose.conf"
     systemctl --user daemon-reload
     # Started again only in Monado's own session, never inside SteamVR's
     restart=false
@@ -111,12 +120,10 @@ deploy:
     systemctl --user stop monado.service 2>/dev/null || true
     mkdir -p "$HOME/.local/opt/monado" "$HOME/.local/bin"
     cp -a "$stage/." "$HOME/.local/opt/monado/"
-    # Diagnostics that moved out of this repository
-    rm -f ~/sf/frame-monado/{capture-trace.sh,fliprate.sh,gpustat.sh,latency.py,meshpeek.py,queue_depth.py}
-    if [ -d "$HOME/sf/rt/bin/linuxarm64" ]; then
-        install -m755 "$HOME/.local/opt/monado/lib/monado/vrclient.so" "$HOME/sf/rt/bin/linuxarm64/vrclient.so"
+    if [ -d "$HOME/.local/share/frame-monado/rt/bin/linuxarm64" ]; then
+        install -m755 "$HOME/.local/opt/monado/lib/monado/vrclient.so" "$HOME/.local/share/frame-monado/rt/bin/linuxarm64/vrclient.so"
     else
-        "$HOME/sf/frame-monado/setup-rt.sh"
+        "$HOME/.local/share/frame-monado/setup-rt.sh"
     fi
     if "$restart"; then systemctl --user start monado.service; fi
     EOF
