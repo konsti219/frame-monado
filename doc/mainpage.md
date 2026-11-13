@@ -60,6 +60,7 @@ State Trackers consume implementations of these APIs provided by other modules.
 * @ref frame-pacing
 * @ref htc-drivers - How the various drivers for HTC headsets interact with
   each other.
+* @ref steam-frame - Running natively on the Valve Steam Frame.
 * @ref implementing-openvr-interfaces - How to improve our OpenVR state tracker.
 
 The key interfaces to begin learning Monado are:
