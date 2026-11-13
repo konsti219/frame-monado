@@ -1,5 +1,9 @@
 # Monado - XR Runtime (XRT)
 
+This `wivrn` branch of [Frame Monado](https://github.com/konsti219/frame-monado) is the PC runtime for
+[frame shell](https://github.com/konsti219/frame-shell): upstream Monado at WiVRn's revision, with WiVRn's
+integrations and the frame shell's host APIs committed as source. The headset runtime is on `main`.
+
 <!--
 Copyright 2018-2021, Collabora, Ltd.
 
