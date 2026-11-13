@@ -30,7 +30,7 @@ Environment=U_PACING_COMP_PRESENT_TO_DISPLAY_OFFSET_MS=10.7 XRT_COMPOSITOR_USE_P
 Environment=U_PACING_COMP_ADAPTIVE_BUDGET=1
 Environment=U_PACING_COMP_MIN_TIME_MS=5
 # driver_cv runs helpers like bin/linuxarm64/start_eyetracking.sh relative to the runtime root
-WorkingDirectory=%h/sf/rt
+WorkingDirectory=%h/.local/share/frame-monado/rt
 ExecStartPre=/bin/rm -f %t/monado_comp_ipc
 # After a switch from game mode, SteamVR's vrserver keeps the controllers' radio dongle for a few more seconds
 # (CRoyDongle::Stop comes ~4 s after the session ends); driver_cv starting on it meanwhile leaves the controllers
@@ -45,11 +45,8 @@ ExecStartPre=/bin/sh -c 'rm -f /dev/shm/sfbq_*'
 # Realtime scheduling for the compositor threads; installs drop the file capability
 ExecStartPre=-/usr/bin/sudo -n /usr/bin/setcap cap_sys_nice+ep %h/.local/opt/monado/bin/monado-service
 # The layout holds a hardlink (not a symlink: /proc/self/exe resolves those), refreshed after reinstalls
-ExecStartPre=/bin/ln -f %h/.local/opt/monado/bin/monado-service %h/sf/rt/bin/linuxarm64/monado-service
-# SteamVR's display chromatic aberration correction (CAC_BLOB on the CRTC, copied from a SteamVR session at 72 Hz):
-# Monado uses green distortion for all colours; the display corrects colour fringes.
-ExecStartPre=-/bin/sh -c 'sudo -n %h/sf/kmscac/kmscac set "$$(cat %h/sf/frame-monado/cac_blob_72hz.hex)"'
+ExecStartPre=/bin/ln -f %h/.local/opt/monado/bin/monado-service %h/.local/share/frame-monado/rt/bin/linuxarm64/monado-service
 # SteamVR's tools with the patched eyetracking, rebuilt each start so a SteamVR update falls back to it unpatched
-ExecStartPre=-%h/sf/frame-monado/eyetracking-tools
+ExecStartPre=-%h/.local/share/frame-monado/eyetracking-tools
 # Started from the SteamVR-shaped layout, since driver_cv finds XRService relative to the executable
-ExecStart=%h/sf/rt/bin/linuxarm64/monado-service
+ExecStart=%h/.local/share/frame-monado/rt/bin/linuxarm64/monado-service

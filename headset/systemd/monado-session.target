@@ -1,5 +1,5 @@
 [Unit]
-Description=Monado VR session (steamframe)
+Description=Monado VR session (frame-monado)
 # Same shape as gamescope-session.target, so steamos-manager's logout (stopping graphical-session.target) ends it
 Requires=graphical-session.target
 BindsTo=graphical-session.target
