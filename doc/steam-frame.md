@@ -58,9 +58,12 @@ alpha, as SteamVR does: Unreal games set none.
 
 `headset/` contains SteamOS session integration. `setup-rt.sh` creates the
 runtime layout using the headset's installed SteamVR driver and the deployed
-Monado shim. `setup.sh` (`just setup`) adds a passwordless sudo rule and
+Monado shim. `setup.sh` (`just setup`, the only step that needs root)
 registers `monado.desktop` as SteamOS's desktop session through SDDM and
-steamos-manager, so `steamosctl switch-to-desktop-mode` starts Monado.
+steamos-manager, so `steamosctl switch-to-desktop-mode` starts Monado. The
+service runs without `cap_sys_nice`: the GPU queue still gets realtime priority,
+and SCHED_FIFO for the compositor threads made no difference in a streamed game
+(SteamVR's compositor doesn't get it on the Frame either).
 `monado-session.target` starts `monado.service`; programs on Monado add
 themselves with `WantedBy=monado.service` (and `Requires=` it, so they stop and
 restart with it). Monado failing switches back to SteamVR, unless whoever
