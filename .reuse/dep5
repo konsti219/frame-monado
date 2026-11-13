@@ -151,3 +151,7 @@ Files: src/xrt/auxiliary/bindings/rebindings/*
 Copyright: 2026, NVIDIA CORPORATION.
 License: BSL-1.0 OR CC0-1.0
 Comment: JSON data files cannot carry SPDX headers cleanly.
+
+Files: headset/* justfile tools/Containerfile tools/aarch64-toolchain.cmake src/xrt/compositor/main/frame_shell_logo.rgba src/xrt/compositor/main/comp_frame_* src/xrt/compositor/util/comp_frame_passthrough.* src/xrt/compositor/util/sf_passthrough.h src/xrt/auxiliary/render/shaders/frame_passthrough.* src/xrt/auxiliary/render/shaders/mesh_projection.frag src/xrt/drivers/steamvr_lh/vrclient/* src/xrt/ipc/server/ipc_input_capture_bindings.py src/xrt/ipc/server/ipc_server_input_capture.*
+Copyright: 2026, Frame Monado contributors
+License: BSL-1.0
