@@ -146,3 +146,7 @@ Comment: SPDX-License-Identifier missing.
 Files: src/external/metrics/*
 Copyright: 2022, Collabora, Ltd.
 License: BSL-1.0
+
+Files: src/xrt/ipc/server/ipc_input_capture_bindings.py src/xrt/ipc/server/ipc_server_input_capture.*
+Copyright: 2026, Frame Monado contributors
+License: BSL-1.0
