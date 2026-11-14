@@ -120,10 +120,5 @@ deploy:
     systemctl --user stop monado.service 2>/dev/null || true
     mkdir -p "$HOME/.local/opt/monado" "$HOME/.local/bin"
     cp -a "$stage/." "$HOME/.local/opt/monado/"
-    if [ -d "$HOME/.local/share/frame-monado/rt/bin/linuxarm64" ]; then
-        install -m755 "$HOME/.local/opt/monado/lib/monado/vrclient.so" "$HOME/.local/share/frame-monado/rt/bin/linuxarm64/vrclient.so"
-    else
-        "$HOME/.local/share/frame-monado/setup-rt.sh"
-    fi
     if "$restart"; then systemctl --user start monado.service; fi
     EOF

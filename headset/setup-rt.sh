@@ -4,7 +4,9 @@ set -eu
 runtime="$HOME/.local/share/frame-monado/rt"
 shim="$HOME/.local/opt/monado/lib/monado/vrclient.so"
 [ -f "$shim" ] || { echo "Deploy the cross-built Monado runtime first" >&2; exit 1; }
-rm -rf "$runtime"
+# Emptied rather than removed: it is monado.service's working directory
+mkdir -p "$runtime"
+find "$runtime" -mindepth 1 -delete
 mkdir -p "$runtime/bin/linuxarm64" "$runtime/drivers/cv/bin/linuxarm64"
 ln -s /opt/steamvr/resources "$runtime/resources"
 "$HOME/.local/share/frame-monado/eyetracking-tools"
