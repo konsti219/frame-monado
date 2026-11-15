@@ -1,10 +1,12 @@
-# Steam Frame Monado: cross-build in the Podman SDK and deploy to the headset
+# Steam Frame Monado: cross-build in the Podman SDK; frame-shell's installer bundles it, `deploy` updates an install
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 root := justfile_directory()
 build_dir := root / "out/headset"
-stage := build_dir / "stage/home/steamos/.local/opt/monado"
+# Inside frame-shell's install (~/.local/share/frame-shell)
+prefix := "/home/steamos/.local/share/frame-shell/monado"
+stage := build_dir / "stage" + prefix
 headset := env("FRAME_HEADSET", "steamos@frame.local")
 sdk := "podman run --rm -i --userns=keep-id -v " + root + ":/work:Z -w /work localhost/frame-monado-cross bash -euo pipefail -s"
 
@@ -26,19 +28,18 @@ build:
     build=/work/out/headset
     cmake -S /work -B "$build/monado" -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE=/work/tools/aarch64-toolchain.cmake \
-        -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/home/steamos/.local/opt/monado \
-        -DCMAKE_INSTALL_RPATH=/home/steamos/.local/opt/monado/lib \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX={{prefix}} -DCMAKE_INSTALL_RPATH={{prefix}}/lib \
         -DXRT_FEATURE_SERVICE=ON -DBUILD_TESTING=OFF -DXRT_FEATURE_DEBUG_GUI=OFF \
         -DXRT_MODULE_MONADO_GUI=OFF -DXRT_BUILD_SAMPLES=OFF
     cmake --build "$build/monado" --parallel "$(nproc)"
     DESTDIR="$build/stage" cmake --install "$build/monado"
-    install -Dm755 /usr/lib/aarch64-linux-gnu/libjpeg.so.62 "$build/stage/home/steamos/.local/opt/monado/lib/libjpeg.so.62"
-    find "$build/stage" -type f ! -path '*/lib/x86_64-linux-gnu/*' \( -name '*.so' -o -name '*.so.*' -o -path "$build/stage/home/steamos/.local/opt/monado/bin/*" \) \
+    install -Dm755 /usr/lib/aarch64-linux-gnu/libjpeg.so.62 "$build/stage{{prefix}}/lib/libjpeg.so.62"
+    find "$build/stage" -type f ! -path '*/lib/x86_64-linux-gnu/*' \( -name '*.so' -o -name '*.so.*' -o -path "$build/stage{{prefix}}/bin/*" \) \
         -exec aarch64-linux-gnu-strip --strip-debug {} +
     EOF
     {{sdk}} <<'EOF'
     build=/work/out/headset
-    stage="$build/stage/home/steamos/.local/opt/monado"
+    stage="$build/stage{{prefix}}"
     runtime_tag=$(sed -n 's/^#define GIT_DESC "\(.*\)"/\1/p' "$build/monado/src/xrt/auxiliary/util/u_git_tag.c")
     export PKG_CONFIG_LIBDIR=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
     cmake -S /work -B "$build/x86-client" -G Ninja \
@@ -64,7 +65,7 @@ build:
     {{sdk}} <<'EOF'
     build=/work/out/headset
     ndk=/work/out/android-sdk/android-ndk-r28c
-    stage="$build/stage/home/steamos/.local/opt/monado"
+    stage="$build/stage{{prefix}}"
     runtime_tag=$(sed -n 's/^#define GIT_DESC "\(.*\)"/\1/p' "$build/monado/src/xrt/auxiliary/util/u_git_tag.c")
     cmake -S /work -B "$build/android-client" -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
@@ -82,43 +83,14 @@ build:
     "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug "$stage/lib/android-arm64/libopenxr_monado.so"
     EOF
 
-# One-time headset setup: the Monado desktop session (asks for the sudo password)
-setup:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    headset="{{headset}}"
-    ssh "$headset" 'mkdir -p ~/.local/share/frame-monado'
-    tar -C "{{root}}/headset" -cf - . | ssh "$headset" 'tar -C ~/.local/share/frame-monado -xf -'
-    ssh -t "$headset" '~/.local/share/frame-monado/setup.sh'
-
-# Install Monado and the session files, restarting the runtime (and what it pulls in) if it ran; FRAME_HEADSET overrides steamos@frame.local
+# Update Monado and the session files in a frame-shell install, restarting Monado if it ran; FRAME_HEADSET overrides steamos@frame.local
 deploy:
     #!/usr/bin/env bash
     set -euo pipefail
     [ -x "{{stage}}/bin/monado-service" ] || { echo "Run just build first" >&2; exit 1; }
     headset="{{headset}}"
-    ssh "$headset" 'mkdir -p ~/.local/state/frame-monado/deploy ~/.local/share/frame-monado ~/.config/systemd/user'
-    tar -C "{{stage}}" -cf - . | ssh "$headset" 'tar -C ~/.local/state/frame-monado/deploy -xf -'
-    tar -C "{{root}}/headset" -cf - . | ssh "$headset" 'tar -C ~/.local/share/frame-monado -xf -'
-    ssh "$headset" 'bash -euo pipefail -s' <<'EOF'
-    stage="$HOME/.local/state/frame-monado/deploy"
-    if report=$(LD_LIBRARY_PATH="$stage/lib" ldd "$stage/bin/monado-service" 2>&1) && [[ "$report" != *"not found"* ]]; then :; else
-        printf '%s\n' "$report" >&2
-        exit 1
-    fi
-    # Units first, so the fallback already knows the marker below
-    install -m644 "$HOME/.local/share/frame-monado/systemd/monado.service" "$HOME/.local/share/frame-monado/systemd/monado-session.target" "$HOME/.local/share/frame-monado/systemd/monado-session-fallback.service" "$HOME/.config/systemd/user/"
-    install -Dm644 -t "$HOME/.config/systemd/user/monado-session-fallback.service.d" "$HOME/.local/share/frame-monado/systemd/not-on-purpose.conf"
-    systemctl --user daemon-reload
-    # Started again only in Monado's own session, never inside SteamVR's
-    restart=false
-    if systemctl --user is-active --quiet monado.service && systemctl --user is-active --quiet monado-session.target; then
-        restart=true
-    fi
-    touch "$XDG_RUNTIME_DIR/monado-stopped-on-purpose"
-    trap 'rm -f "$XDG_RUNTIME_DIR/monado-stopped-on-purpose"' EXIT
-    systemctl --user stop monado.service 2>/dev/null || true
-    mkdir -p "$HOME/.local/opt/monado" "$HOME/.local/bin"
-    cp -a "$stage/." "$HOME/.local/opt/monado/"
-    if "$restart"; then systemctl --user start monado.service; fi
-    EOF
+    ssh "$headset" '[ -x ~/.local/share/frame-shell/install.sh ]' || { echo "Install frame-shell on the headset first" >&2; exit 1; }
+    ssh "$headset" 'mkdir -p ~/.local/state/frame-monado/deploy/monado ~/.local/state/frame-monado/deploy/session'
+    rsync -a --delete "{{stage}}/" "$headset:.local/state/frame-monado/deploy/monado/"
+    rsync -a --delete "{{root}}/headset/" "$headset:.local/state/frame-monado/deploy/session/"
+    ssh -t "$headset" '~/.local/share/frame-shell/install.sh monado ~/.local/state/frame-monado/deploy'

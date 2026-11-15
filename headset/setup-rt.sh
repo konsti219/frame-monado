@@ -1,15 +1,15 @@
 #!/bin/sh
 # Creates the SteamVR-shaped layout driver_cv derives from /proc/self/exe.
 set -eu
-runtime="$HOME/.local/share/frame-monado/rt"
-shim="$HOME/.local/opt/monado/lib/monado/vrclient.so"
+runtime="$HOME/.local/share/frame-shell/rt"
+shim="$HOME/.local/share/frame-shell/monado/lib/monado/vrclient.so"
 [ -f "$shim" ] || { echo "Deploy the cross-built Monado runtime first" >&2; exit 1; }
 # Emptied rather than removed: it is monado.service's working directory
 mkdir -p "$runtime"
 find "$runtime" -mindepth 1 -delete
 mkdir -p "$runtime/bin/linuxarm64" "$runtime/drivers/cv/bin/linuxarm64"
 ln -s /opt/steamvr/resources "$runtime/resources"
-"$HOME/.local/share/frame-monado/eyetracking-tools"
+"$HOME/.local/share/frame-shell/session/eyetracking-tools"
 for d in /opt/steamvr/drivers/*; do [ "${d##*/}" = cv ] || ln -s "$d" "$runtime/drivers/"; done
 for f in /opt/steamvr/drivers/cv/*; do [ "${f##*/}" = bin ] || ln -s "$f" "$runtime/drivers/cv/"; done
 for f in /opt/steamvr/drivers/cv/bin/linuxarm64/*; do ln -s "$f" "$runtime/drivers/cv/bin/linuxarm64/"; done
@@ -19,6 +19,6 @@ for f in /opt/steamvr/bin/linuxarm64/*; do
 	ln -s "$f" "$runtime/bin/linuxarm64/"
 done
 # A hardlink, since /proc/self/exe resolves symlinks
-ln -f "$HOME/.local/opt/monado/bin/monado-service" "$runtime/bin/linuxarm64/monado-service"
+ln -f "$HOME/.local/share/frame-shell/monado/bin/monado-service" "$runtime/bin/linuxarm64/monado-service"
 # XRService loads the shim through VR_OVERRIDE, which driver_cv sets to this layout.
 install -m 755 "$shim" "$runtime/bin/linuxarm64/vrclient.so"

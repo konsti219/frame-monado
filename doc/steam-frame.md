@@ -14,14 +14,14 @@ headset drivers, tracking, passthrough, compositor and floor estimation.
 git clone https://github.com/konsti219/frame-monado.git
 cd frame-monado
 just build
-just setup    # once
-just deploy
+just deploy   # into an existing frame-shell install
 ```
 
 Builds run on the PC in the Podman cross-compilation SDK. Sources are tracked
 normally and edited here; `out/` holds ignored build products. The headset
-receives binaries and session scripts only. Deployment checks dependencies,
-preserves whether the shell/runtime were running, and restarts those services.
+receives binaries and session scripts only. Frame shell's installer bundles
+them (`~/.local/share/frame-shell/monado` and `session`); `just deploy` replaces
+them in an install through that installer, restarting Monado if it ran.
 `FRAME_HEADSET` overrides the default `steamos@frame.local` SSH target.
 
 The build also produces a matching x86-64 IPC client for Windows games running
@@ -58,9 +58,10 @@ alpha, as SteamVR does: Unreal games set none.
 
 `headset/` contains SteamOS session integration. `setup-rt.sh` creates the
 runtime layout using the headset's installed SteamVR driver and the deployed
-Monado shim, at every start of `monado.service`. `setup.sh` (`just setup`, the only step that needs root)
+Monado shim, at every start of `monado.service`. Frame shell's installer
 registers `monado.desktop` as SteamOS's desktop session through SDDM and
-steamos-manager, so `steamosctl switch-to-desktop-mode` starts Monado. The
+steamos-manager (the only step that needs root), so
+`steamosctl switch-to-desktop-mode` starts Monado. The
 service runs without `cap_sys_nice`: the GPU queue still gets realtime priority,
 and SCHED_FIFO for the compositor threads made no difference in a streamed game
 (SteamVR's compositor doesn't get it on the Frame either).
@@ -161,7 +162,7 @@ SteamVR's eye tracker feeds both eye cameras to one network without flipping
 either, so the wearer's left eye (camera ring 1, mounted upside down) reaches it
 upside down. `headset/eyetracking-flip-patch.py` patches a copy that flips that
 eye's input and mirrors its outputs back; `monado.service` rebuilds
-`~/.local/share/frame-monado/rt/tools` with it (`headset/eyetracking-tools`) on
+`~/.local/share/frame-shell/rt/tools` with it (`headset/eyetracking-tools`) on
 every start, and runs SteamVR's binary unpatched when the build is unknown.
 
 The eye gaze is corrected with `~/.config/monado/eye-calibration`, which the

@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Monado
 Comment=Monado with Valve's tracking, no SteamVR
-Exec=/home/steamos/.local/share/frame-monado/monado-session
+Exec=/home/steamos/.local/share/frame-shell/session/monado-session
 Type=Application
 DesktopNames=Monado

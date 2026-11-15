@@ -30,7 +30,7 @@ Environment=U_PACING_COMP_PRESENT_TO_DISPLAY_OFFSET_MS=10.7 XRT_COMPOSITOR_USE_P
 Environment=U_PACING_COMP_ADAPTIVE_BUDGET=1
 Environment=U_PACING_COMP_MIN_TIME_MS=5
 # driver_cv runs helpers like bin/linuxarm64/start_eyetracking.sh relative to the runtime root
-WorkingDirectory=-%h/.local/share/frame-monado/rt
+WorkingDirectory=-%h/.local/share/frame-shell/rt
 ExecStartPre=/bin/rm -f %t/monado_comp_ipc
 # After a switch from game mode, SteamVR's vrserver keeps the controllers' radio dongle for a few more seconds
 # (CRoyDongle::Stop comes ~4 s after the session ends); driver_cv starting on it meanwhile leaves the controllers
@@ -43,6 +43,6 @@ ExecStartPre=/bin/sh -c 'for i in $$(seq 100); do case "$$(systemctl --user is-a
 # orphaned memory (no controller poses, only haptics). Without them XRService retries until the queues exist.
 ExecStartPre=/bin/sh -c 'rm -f /dev/shm/sfbq_*'
 # The SteamVR-shaped layout, rebuilt each start so it follows SteamVR updates and Monado reinstalls
-ExecStartPre=%h/.local/share/frame-monado/setup-rt.sh
+ExecStartPre=%h/.local/share/frame-shell/session/setup-rt.sh
 # Started from the SteamVR-shaped layout, since driver_cv finds XRService relative to the executable
-ExecStart=%h/.local/share/frame-monado/rt/bin/linuxarm64/monado-service
+ExecStart=%h/.local/share/frame-shell/rt/bin/linuxarm64/monado-service

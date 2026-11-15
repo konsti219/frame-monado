@@ -23,23 +23,20 @@ It supports:
 
 ## Install
 
-Requirements: a Steam Frame reachable over SSH as `steamos` (with a password set), and a PC with Podman and `just`.
-
-```sh
-just build      # cross-builds in Podman
-just setup      # once: registers the Monado session with SteamOS (asks for the sudo password)
-just deploy     # over SSH (FRAME_HEADSET, default steamos@frame.local)
-```
-
-This installs:
-
-- Monado's service and its OpenXR clients (ARM64, x86-64, Android) in `~/.local/opt/monado`
-- systemd user units that run it as its own session, next to SteamVR's driver in a runtime layout in
-  `~/.local/share/frame-monado`
-- the session entry for SteamOS's session switch, in `/etc/frame-monado` and `/etc/sddm.conf.d`
+Frame Monado comes with [frame shell](https://github.com/konsti219/frame-shell): its installer puts Monado in
+`~/.local/share/frame-shell/monado`, with systemd user units that run it as its own SteamOS session next to
+SteamVR's driver, and the session entry in `/etc/frame-monado` and `/etc/sddm.conf.d`, kept through SteamOS updates by
+`/etc/atomic-update.conf.d/frame-monado.conf`.
 
 On the headset, `steamosctl switch-to-desktop-mode` starts Monado and `steamosctl switch-to-game-mode` goes back
 to SteamVR; Monado failing also switches back.
+
+To work on it, with frame shell installed and Podman and `just` on the PC:
+
+```sh
+just build      # cross-builds in Podman
+just deploy     # replaces Monado in the install over SSH (FRAME_HEADSET, default steamos@frame.local)
+```
 
 ## More
 
