@@ -34,6 +34,13 @@
 		]
 	},
 
+	"compositor_mark_gpu_time": {
+		"in": [
+			{"name": "frame_id", "type": "int64_t"},
+			{"name": "gpu_time_ns", "type": "uint64_t"}
+		]
+	},
+
 	"compositor_layer_sync": {
 		"in": [
 			{"name": "slot_id", "type": "uint32_t"}

@@ -819,6 +819,16 @@ ipc_compositor_discard_frame(struct xrt_compositor *xc, int64_t frame_id)
 }
 
 static xrt_result_t
+ipc_compositor_mark_gpu_time(struct xrt_compositor *xc, int64_t frame_id, uint64_t gpu_time_ns)
+{
+	struct ipc_client_compositor *icc = ipc_client_compositor(xc);
+	xrt_result_t xret;
+
+	xret = ipc_call_compositor_mark_gpu_time(icc->ipc_c, frame_id, gpu_time_ns);
+	IPC_CHK_ALWAYS_RET(icc->ipc_c, xret, "ipc_call_compositor_mark_gpu_time");
+}
+
+static xrt_result_t
 ipc_compositor_set_performance_level(struct xrt_compositor *xc,
                                      enum xrt_perf_domain domain,
                                      enum xrt_perf_set_level level)
@@ -898,6 +908,7 @@ ipc_compositor_init(struct ipc_client_compositor *icc, struct xrt_compositor_nat
 	icc->base.base.wait_frame = ipc_compositor_wait_frame;
 	icc->base.base.begin_frame = ipc_compositor_begin_frame;
 	icc->base.base.discard_frame = ipc_compositor_discard_frame;
+	icc->base.base.mark_gpu_time = ipc_compositor_mark_gpu_time;
 	icc->base.base.layer_begin = ipc_compositor_layer_begin;
 	icc->base.base.layer_projection = ipc_compositor_layer_projection;
 	icc->base.base.layer_projection_depth = ipc_compositor_layer_projection_depth;

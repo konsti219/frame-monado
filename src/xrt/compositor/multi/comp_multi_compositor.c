@@ -621,6 +621,18 @@ multi_compositor_begin_frame(struct xrt_compositor *xc, int64_t frame_id)
 }
 
 static xrt_result_t
+multi_compositor_mark_gpu_time(struct xrt_compositor *xc, int64_t frame_id, uint64_t gpu_time_ns)
+{
+	struct multi_compositor *mc = multi_compositor(xc);
+
+	os_mutex_lock(&mc->msc->list_and_timing_lock);
+	u_pa_mark_gpu_time(mc->upa, frame_id, gpu_time_ns);
+	os_mutex_unlock(&mc->msc->list_and_timing_lock);
+
+	return XRT_SUCCESS;
+}
+
+static xrt_result_t
 multi_compositor_discard_frame(struct xrt_compositor *xc, int64_t frame_id)
 {
 	COMP_TRACE_MARKER();
@@ -1028,6 +1040,7 @@ multi_compositor_create(struct multi_system_compositor *msc,
 	mc->base.base.wait_frame = multi_compositor_wait_frame;
 	mc->base.base.begin_frame = multi_compositor_begin_frame;
 	mc->base.base.discard_frame = multi_compositor_discard_frame;
+	mc->base.base.mark_gpu_time = multi_compositor_mark_gpu_time;
 	mc->base.base.layer_begin = multi_compositor_layer_begin;
 	mc->base.base.layer_projection = multi_compositor_layer_projection;
 	mc->base.base.layer_projection_depth = multi_compositor_layer_projection_depth;

@@ -1245,6 +1245,14 @@ struct xrt_compositor
 	 */
 	xrt_result_t (*discard_frame)(struct xrt_compositor *xc, int64_t frame_id);
 
+	/*!
+	 * @brief Optional: the GPU time an earlier frame took, measured in the app's process.
+	 *
+	 * @param[in] frame_id    The frame the time is for, already ended.
+	 * @param[in] gpu_time_ns How long the GPU worked on the frame.
+	 */
+	xrt_result_t (*mark_gpu_time)(struct xrt_compositor *xc, int64_t frame_id, uint64_t gpu_time_ns);
+
 	/*! @} */
 
 
@@ -1720,6 +1728,22 @@ XRT_NONNULL_ALL static inline xrt_result_t
 xrt_comp_discard_frame(struct xrt_compositor *xc, int64_t frame_id)
 {
 	return xc->discard_frame(xc, frame_id);
+}
+
+/*!
+ * @copydoc xrt_compositor::mark_gpu_time
+ *
+ * Helper for calling through the function pointer, does nothing where it is not implemented.
+ *
+ * @public @memberof xrt_compositor
+ */
+XRT_NONNULL_ALL static inline xrt_result_t
+xrt_comp_mark_gpu_time(struct xrt_compositor *xc, int64_t frame_id, uint64_t gpu_time_ns)
+{
+	if (xc->mark_gpu_time == NULL) {
+		return XRT_SUCCESS;
+	}
+	return xc->mark_gpu_time(xc, frame_id, gpu_time_ns);
 }
 
 /*! @} */

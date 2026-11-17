@@ -38,6 +38,7 @@ struct u_metrics_session_frame
 	bool discarded;
 	uint64_t when_submit_begin_ns;
 	uint64_t when_submit_end_ns;
+	uint64_t gpu_time_ns;
 };
 
 struct u_metrics_used

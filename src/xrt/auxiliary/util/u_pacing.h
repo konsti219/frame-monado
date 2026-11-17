@@ -410,6 +410,15 @@ struct u_pacing_app
 	void (*mark_gpu_done)(struct u_pacing_app *upa, int64_t frame_id, int64_t when_ns);
 
 	/*!
+	 * Optional: the GPU time the app measured for a frame, arrives after @ref mark_gpu_done or never.
+	 *
+	 * @param     upa         App pacer struct.
+	 * @param[in] frame_id    The frame ID the time is for.
+	 * @param[in] gpu_time_ns How long the GPU worked on the frame.
+	 */
+	void (*mark_gpu_time)(struct u_pacing_app *upa, int64_t frame_id, uint64_t gpu_time_ns);
+
+	/*!
 	 * Latch a frame for rendering for delivery to the native compositor,
 	 * may be called multiple times for the same frame should the app be on
 	 * a frame cadence that is lower then the native compositor.
@@ -536,6 +545,22 @@ static inline void
 u_pa_mark_gpu_done(struct u_pacing_app *upa, int64_t frame_id, int64_t when_ns)
 {
 	upa->mark_gpu_done(upa, frame_id, when_ns);
+}
+
+/*!
+ * @copydoc u_pacing_app::mark_gpu_time
+ *
+ * Helper for calling through the function pointer, does nothing where it is not implemented.
+ *
+ * @public @memberof u_pacing_app
+ * @ingroup aux_pacing
+ */
+static inline void
+u_pa_mark_gpu_time(struct u_pacing_app *upa, int64_t frame_id, uint64_t gpu_time_ns)
+{
+	if (upa->mark_gpu_time != NULL) {
+		upa->mark_gpu_time(upa, frame_id, gpu_time_ns);
+	}
 }
 
 /*!

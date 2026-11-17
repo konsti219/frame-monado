@@ -469,6 +469,8 @@ client_vk_compositor_layer_begin(struct xrt_compositor *xc, const struct xrt_lay
 {
 	COMP_TRACE_MARKER();
 
+	client_vk_compositor(xc)->frame_id = data->frame_id;
+
 	return xrt_comp_layer_begin(to_native_compositor(xc), data);
 }
 
@@ -618,6 +620,15 @@ client_vk_compositor_layer_commit(struct xrt_compositor *xc, xrt_graphics_sync_h
 	COMP_TRACE_MARKER();
 
 	struct client_vk_compositor *c = client_vk_compositor(xc);
+
+	if (c->gpu_time_end != NULL) {
+		int64_t frame_id;
+		uint64_t gpu_time_ns;
+		while (c->gpu_time_pop(c->vk.device, &frame_id, &gpu_time_ns)) {
+			xrt_comp_mark_gpu_time(&c->xcn->base, frame_id, gpu_time_ns);
+		}
+		c->gpu_time_end(c->vk.device, c->frame_id);
+	}
 
 	if (c->renderdoc_enabled) {
 		struct vk_bundle *vk = &c->vk;
@@ -892,6 +903,9 @@ client_vk_compositor_create(struct xrt_compositor_native *xcn,
 	if (ret != VK_SUCCESS) {
 		goto err_mutex;
 	}
+
+	c->gpu_time_end = (void *)c->vk.vkGetDeviceProcAddr(c->vk.device, "vkFrameGpuTimeEnd");
+	c->gpu_time_pop = (void *)c->vk.vkGetDeviceProcAddr(c->vk.device, "vkFrameGpuTimePop");
 
 	VK_NAME_COMMAND_POOL(&c->vk, c->pool.pool, "client_vk_compositor command pool");
 

@@ -81,6 +81,11 @@ struct client_vk_compositor
 	struct vk_cmd_pool pool;
 
 	bool renderdoc_enabled;
+
+	// The GPU-time Vulkan layer's functions, NULL without the layer
+	void (*gpu_time_end)(VkDevice device, int64_t frame_id);
+	VkBool32 (*gpu_time_pop)(VkDevice device, int64_t *out_frame_id, uint64_t *out_gpu_time_ns);
+	int64_t frame_id;
 	VkCommandBuffer dcb;
 };
 
