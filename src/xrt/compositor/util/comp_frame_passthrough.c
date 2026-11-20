@@ -963,6 +963,36 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 	m->logged = true;
 }
 
+// Whether the 3x4 row-major matrix at float index base has an orthonormal rotation part
+static bool
+metadata_rotation_at(const float *meta, int base)
+{
+	for (int row = 0; row < 3; row++) {
+		float norm = 0;
+		for (int k = 0; k < 3; k++)
+			norm += meta[base + row * 4 + k] * meta[base + row * 4 + k];
+		if (!isfinite(norm) || fabsf(norm - 1) > 0.01f)
+			return false;
+	}
+	return true;
+}
+
+// XRService from SteamOS 0.5.10 on writes the frame metadata without the 8 bytes after the capture time, so
+// everything from the intrinsics on sits two floats earlier: move it back to the layout the rest of this file reads
+static void
+metadata_copy(uint8_t dst[SF_PT_METADATA_SIZE], const uint8_t src[SF_PT_METADATA_SIZE])
+{
+	float meta[62];
+	memcpy(meta, src, sizeof(meta));
+	if (metadata_rotation_at(meta, 12) || !metadata_rotation_at(meta, 10)) {
+		memcpy(dst, src, SF_PT_METADATA_SIZE);
+		return;
+	}
+	memset(dst, 0, SF_PT_METADATA_SIZE);
+	memcpy(dst, src, 8);
+	memcpy(dst + 16, src + 8, SF_PT_METADATA_SIZE - 16);
+}
+
 static bool
 capture_orientation(const uint8_t metadata[SF_PT_METADATA_SIZE], struct xrt_quat *orientation)
 {
@@ -1052,7 +1082,7 @@ sf_comp_passthrough_prepare(struct sf_comp_passthrough *pt,
 			                                __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
 				if (frame_planes(pt, c, t, f, best, render->r->cmd) &&
 				    __atomic_load_n(&t->generation, __ATOMIC_ACQUIRE) == generation) {
-					memcpy(c->metadata, f->metadata, sizeof(c->metadata));
+					metadata_copy(c->metadata, f->metadata);
 					c->seq = seq;
 					c->time = f->submit_ns;
 					c->width = t->width;
