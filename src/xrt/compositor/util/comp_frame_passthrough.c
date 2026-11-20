@@ -71,6 +71,9 @@ struct pt_mesh
 	struct pt_texture depth;
 	uint64_t seq, layout_id;
 	double time; // posePredictionBaseTime, CLOCK_MONOTONIC_RAW seconds
+	// When the block has no posePredictionBaseTime (XRService from SteamOS 0.5.10 on): when Monado first saw it
+	uint64_t seen_seq;
+	double seen_time;
 	float focal, cx, cy;
 	float mesh_from_world[12]; // 3x4 rows
 	bool valid, logged;
@@ -887,7 +890,12 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 		return;
 	const double *time = queue_property(block, header_size, "/meshData/posePredictionBaseTime", 8);
 	const float *pose = queue_property(block, header_size, "/meshData/rawFromMeshPose", 48);
-	if (!time || !pose || now - *time >= SF_MESH_MAX_AGE_S)
+	if (!time && seq != m->seen_seq) {
+		m->seen_seq = seq;
+		m->seen_time = now;
+	}
+	double base_time = time ? *time : m->seen_time;
+	if (!pose || now - base_time >= SF_MESH_MAX_AGE_S)
 		return;
 	uint32_t vertices = m->width * m->height;
 	VkFormat format = pt->mesh_format;
@@ -920,7 +928,6 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 	}
 	float pose_copy[12];
 	memcpy(pose_copy, pose, sizeof(pose_copy));
-	double base_time = *time;
 	if (queue_block_seq(&m->data, index) != seq || n < 100)
 		return; // overwritten while copying, or nothing usable
 	double focal[2], centre[2];
@@ -954,6 +961,36 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 		U_LOG_I("Passthrough room mesh: %ux%u grid, focal %.2f cells, centre %.2f %.2f, %s", m->width, m->height,
 		        m->focal, m->cx, m->cy, format == VK_FORMAT_R32_SFLOAT ? "R32" : "R16");
 	m->logged = true;
+}
+
+// Whether the 3x4 row-major matrix at float index base has an orthonormal rotation part
+static bool
+metadata_rotation_at(const float *meta, int base)
+{
+	for (int row = 0; row < 3; row++) {
+		float norm = 0;
+		for (int k = 0; k < 3; k++)
+			norm += meta[base + row * 4 + k] * meta[base + row * 4 + k];
+		if (!isfinite(norm) || fabsf(norm - 1) > 0.01f)
+			return false;
+	}
+	return true;
+}
+
+// XRService from SteamOS 0.5.10 on writes the frame metadata without the 8 bytes after the capture time, so
+// everything from the intrinsics on sits two floats earlier: move it back to the layout the rest of this file reads
+static void
+metadata_copy(uint8_t dst[SF_PT_METADATA_SIZE], const uint8_t src[SF_PT_METADATA_SIZE])
+{
+	float meta[62];
+	memcpy(meta, src, sizeof(meta));
+	if (metadata_rotation_at(meta, 12) || !metadata_rotation_at(meta, 10)) {
+		memcpy(dst, src, SF_PT_METADATA_SIZE);
+		return;
+	}
+	memset(dst, 0, SF_PT_METADATA_SIZE);
+	memcpy(dst, src, 8);
+	memcpy(dst + 16, src + 8, SF_PT_METADATA_SIZE - 16);
 }
 
 static bool
@@ -1045,7 +1082,7 @@ sf_comp_passthrough_prepare(struct sf_comp_passthrough *pt,
 			                                __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
 				if (frame_planes(pt, c, t, f, best, render->r->cmd) &&
 				    __atomic_load_n(&t->generation, __ATOMIC_ACQUIRE) == generation) {
-					memcpy(c->metadata, f->metadata, sizeof(c->metadata));
+					metadata_copy(c->metadata, f->metadata);
 					c->seq = seq;
 					c->time = f->submit_ns;
 					c->width = t->width;
