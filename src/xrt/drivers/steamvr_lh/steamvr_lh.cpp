@@ -264,9 +264,11 @@ logging_stub(const char *name)
 		stub->vtable = logging_stub_vtable(std::make_integer_sequence<int, 96>{});
 		stub->name = strdup(name);
 		if (std::strcmp(name, "IVRServerInternal_XXX") == 0) {
-			// driver_cv puts slot 65's std::string (returned through x8) into JSON every 5 minutes
+			// driver_cv puts this std::string (returned through x8) into JSON every 5 minutes: slot 65, and slot
+			// 64 since SteamOS 0.5.10's driver_cv dropped a method before it. Neither build calls the other slot.
 			void **vtable = new void *[96];
 			std::memcpy(vtable, stub->vtable, 96 * sizeof(void *));
+			vtable[64] = reinterpret_cast<void *>(&empty_string_slot);
 			vtable[65] = reinterpret_cast<void *>(&empty_string_slot);
 			stub->vtable = vtable;
 		}
