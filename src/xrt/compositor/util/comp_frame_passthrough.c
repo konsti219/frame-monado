@@ -71,6 +71,9 @@ struct pt_mesh
 	struct pt_texture depth;
 	uint64_t seq, layout_id;
 	double time; // posePredictionBaseTime, CLOCK_MONOTONIC_RAW seconds
+	// When the block has no posePredictionBaseTime (XRService from SteamOS 0.5.10 on): when Monado first saw it
+	uint64_t seen_seq;
+	double seen_time;
 	float focal, cx, cy;
 	float mesh_from_world[12]; // 3x4 rows
 	bool valid, logged;
@@ -887,7 +890,12 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 		return;
 	const double *time = queue_property(block, header_size, "/meshData/posePredictionBaseTime", 8);
 	const float *pose = queue_property(block, header_size, "/meshData/rawFromMeshPose", 48);
-	if (!time || !pose || now - *time >= SF_MESH_MAX_AGE_S)
+	if (!time && seq != m->seen_seq) {
+		m->seen_seq = seq;
+		m->seen_time = now;
+	}
+	double base_time = time ? *time : m->seen_time;
+	if (!pose || now - base_time >= SF_MESH_MAX_AGE_S)
 		return;
 	uint32_t vertices = m->width * m->height;
 	VkFormat format = pt->mesh_format;
@@ -920,7 +928,6 @@ mesh_update(struct sf_comp_passthrough *pt, VkCommandBuffer cmd)
 	}
 	float pose_copy[12];
 	memcpy(pose_copy, pose, sizeof(pose_copy));
-	double base_time = *time;
 	if (queue_block_seq(&m->data, index) != seq || n < 100)
 		return; // overwritten while copying, or nothing usable
 	double focal[2], centre[2];
